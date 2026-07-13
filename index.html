@@ -57,8 +57,8 @@ const ACCEL = 85;
 const BRAKE = 110;
 const DRAG = 0.35;
 const TURN_RATE = 2.6;
-const CAM_DIST = 13;
-const CAM_HEIGHT = 5.5;
+const CAM_DIST = 8;
+const CAM_HEIGHT = 4.0;
 const ROAD_W = 9;
 const CHUNK_SIZE = 100;
 const CHUNK_SEG = 40;
@@ -165,25 +165,30 @@ function getNormal(x, z) {
 }
 
 function terrainColor(x, z, y, slope) {
-    const n = (fbm(x * 0.008, z * 0.008, 3) - 0.5) * 0.15;
+    const n = (fbm(x * 0.01, z * 0.01, 3) - 0.5) * 0.1;
+    const w = fbm(x * 0.003, z * 0.003, 2) * 0.5 + 0.5;
     let r, g, b;
     if (y < -8) {
-        r = 0.12 + n; g = 0.28 + n; b = 0.06 + n;
+        r = 0.18 + n; g = 0.32 + n; b = 0.08 + n;
     } else if (y < 2) {
         const t = (y + 8) / 10;
-        r = 0.12 + t * 0.28 + n; g = 0.28 + t * 0.30 + n; b = 0.06 + t * 0.06;
+        r = 0.18 + t * 0.28 + n; g = 0.32 + t * 0.30 + n; b = 0.08 + t * 0.06;
     } else if (y < 12) {
         const t = (y - 2) / 10;
-        r = 0.40 + t * 0.05 + n; g = 0.58 - t * 0.05 + n; b = 0.12 + t * 0.02;
+        r = 0.46 + t * 0.05 + n; g = 0.62 - t * 0.05 + n; b = 0.14 + t * 0.02;
     } else if (y < 22) {
         const t = (y - 12) / 10;
-        r = 0.45 + t * 0.15 + n; g = 0.53 - t * 0.10 + n; b = 0.14 + t * 0.03;
+        r = 0.51 + t * 0.10 + n; g = 0.57 - t * 0.08 + n; b = 0.16 + t * 0.03;
     } else {
         const t = Math.min(1, (y - 22) / 12);
-        r = 0.60 + t * 0.20 + n; g = 0.43 - t * 0.10 + n; b = 0.17 - t * 0.02;
+        r = 0.61 + t * 0.18 + n; g = 0.49 - t * 0.08 + n; b = 0.19 - t * 0.02;
     }
     const shade = 1 - slope * 0.25;
-    return [r * shade, g * shade, b * shade];
+    return [
+        Math.max(0.015, r * shade),
+        Math.max(0.015, g * shade),
+        Math.max(0.015, b * shade)
+    ];
 }
 
 // ── TERRAIN CHUNKS ──
@@ -373,7 +378,7 @@ const treeChunks = new Map();
 function buildTreesForChunk(cx, cz) {
     const g = new THREE.Group();
     const ox = cx * CHUNK_SIZE, oz = cz * CHUNK_SIZE;
-    const count = 6 + Math.floor(fbm(cx * 3.7, cz * 3.7, 2) * 4 + 3);
+    const count = 10 + Math.floor(fbm(cx * 3.7, cz * 3.7, 2) * 6 + 5);
     for (let i = 0; i < count; i++) {
         const hx = hash(cx * 1000 + i * 7, cz * 1000 + i * 13);
         const hz = hash(cx * 1000 + i * 11, cz * 1000 + i * 5);
@@ -559,7 +564,7 @@ function buildFestival() {
 
     // Tents
     const tentColors = [[0xff6b35,0xf7c948],[0x6b35ff,0xff6b35],[0x35b5ff,0x6bff35],[0xff35b5,0x35b5ff],[0xf7c948,0xff6b35]];
-    const tOffsets = [[-18,-3],[18,-2],[-15,12],[14,10],[-4,18],[3,17]];
+    const tOffsets = [[-18,-3],[18,-2],[-15,12],[14,10],[-4,18],[3,17],[-12,-14],[12,-12],[-8,22],[22,2],[-22,6],[6,-18]];
     for (let i = 0; i < tOffsets.length; i++) {
         const tx = fx + tOffsets[i][0], tz = fz + tOffsets[i][1];
         const ty = getHeight(tx, tz);
@@ -610,9 +615,96 @@ function buildFestival() {
         }
     }
 
+    // Campfire
+    const fireMat = new THREE.MeshBasicMaterial({color:0xff6600, transparent:true, opacity:0.5});
+    const fireG = new THREE.SphereGeometry(0.4, 6, 6);
+    for (let i = 0; i < 8; i++) {
+        const f = new THREE.Mesh(fireG, fireMat);
+        f.position.set(fx-2+Math.random()*4, fy+0.15+Math.random()*0.3, fz+19+Math.random()*3);
+        f.scale.set(1, 0.3+Math.random()*0.6, 1);
+        g.add(f);
+    }
+    const logMat = new THREE.MeshBasicMaterial({color:0x4a3020});
+    for (let i = 0; i < 5; i++) {
+        const l = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.8, 4), logMat);
+        l.position.set(fx-0.3+Math.random()*0.6, fy+0.05, fz+20+Math.random()*0.6);
+        l.rotation.z = (Math.random()-0.5)*0.5;
+        l.rotation.x = (Math.random()-0.5)*0.5;
+        g.add(l);
+    }
+
     return g;
 }
 scene.add(buildFestival());
+
+// ── WATER ──
+const waterMat = new THREE.MeshStandardMaterial({
+    color: 0x2a8aba, transparent: true, opacity: 0.5,
+    roughness: 0.1, metalness: 0.2, side: THREE.DoubleSide,
+    depthWrite: false,
+});
+function addLake(cx, cz, radius, level) {
+    const water = new THREE.Mesh(new THREE.CircleGeometry(radius, 32), waterMat);
+    water.position.set(cx, level, cz);
+    water.rotation.x = -Math.PI / 2;
+    water.renderOrder = 1;
+    scene.add(water);
+
+    const shoreMat = new THREE.MeshBasicMaterial({color:0x7a6a4a, transparent:true, opacity:0.15, side:THREE.DoubleSide, depthWrite:false});
+    const shore = new THREE.Mesh(new THREE.RingGeometry(radius-1, radius+3, 32), shoreMat);
+    shore.position.set(cx, level-0.1, cz);
+    shore.rotation.x = -Math.PI / 2;
+    shore.renderOrder = 0;
+    scene.add(shore);
+}
+addLake(0, -130, 32, getHeight(0, -130) + 1.5);
+addLake(110, 70, 24, getHeight(110, 70) + 1.2);
+addLake(-100, 90, 22, getHeight(-100, 90) + 1.0);
+addLake(60, -55, 16, getHeight(60, -55) + 0.8);
+addLake(-130, -45, 20, getHeight(-130, -45) + 1.0);
+
+// ── ROCKS ──
+const rockMat = new THREE.MeshStandardMaterial({color:0x777777, roughness:0.9, metalness:0.0});
+const rockG = new THREE.DodecahedronGeometry(0.6);
+(function placeRocks() {
+    for (let i = 0; i < 120; i++) {
+        const a = Math.random()*6.28, r = 30+Math.random()*20;
+        const rx = Math.cos(a)*r + (Math.random()-0.5)*10;
+        const rz = Math.sin(a)*r + (Math.random()-0.5)*10;
+        const hy = getHeight(rx, rz);
+        if (hy < -2 || hy > 12) continue;
+        const s = 0.3 + Math.random() * 0.8;
+        const rock = new THREE.Mesh(rockG, rockMat);
+        rock.position.set(rx, hy+0.1, rz);
+        rock.scale.set(s, s*0.6, s);
+        rock.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
+        scene.add(rock);
+    }
+})();
+
+// ── ROAD SIGNS ──
+const signMat = new THREE.MeshBasicMaterial({color:0xcc6600, side:THREE.DoubleSide});
+const poleMat = new THREE.MeshBasicMaterial({color:0x888888});
+(function placeSigns() {
+    for (let i = 100; i < NUM_RP; i += 80) {
+        const p = roadWP[i], q = roadWP[(i+50)%NUM_RP];
+        const dx = q.x-p.x, dz = q.z-p.z;
+        const ml = Math.sqrt(dx*dx+dz*dz) || 1;
+        for (const side of [-1, 1]) {
+            const nx = dz/ml * side, nz = -dx/ml * side;
+            const sx = p.x + nx * (ROAD_W/2 + 2);
+            const sz = p.z + nz * (ROAD_W/2 + 2);
+            const hy = getHeight(sx, sz) + 0.3;
+            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 2.5, 4), poleMat);
+            pole.position.set(sx, hy+1.25, sz);
+            scene.add(pole);
+            const board = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.4), signMat);
+            board.position.set(sx, hy+2.6, sz);
+            board.lookAt(sx+dx*0.1, hy+2.6, sz+dz*0.1);
+            scene.add(board);
+        }
+    }
+})();
 
 // ── CAR ──
 const car = new THREE.Group();
