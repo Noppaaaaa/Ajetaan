@@ -311,53 +311,28 @@ const roadMesh = new THREE.Mesh(roadGeo, roadMat);
 roadMesh.receiveShadow = true;
 scene.add(roadMesh);
 
-// Road edge lines (thin white strips at road edges)
-const edgeMat = new THREE.MeshBasicMaterial({color:0xffffff, side:THREE.DoubleSide});
-(function buildEdges() {
-    const ew = 0.3;
-    for (let side = -1; side <= 1; side += 2) {
-        const verts = [], idx = [];
-        const hw = ROAD_W/2 - ew/2;
-        for (let i = 0; i < NUM_RP; i++) {
-            const pj = roadWP[i];
-            const pi = roadWP[(i-1+NUM_RP)%NUM_RP], pk = roadWP[(i+1)%NUM_RP];
-            const dx = pk.x - pi.x, dz = pk.z - pi.z;
-            const ml = Math.sqrt(dx*dx+dz*dz) || 1;
-            const nx = -dz/ml * side, nz = dx/ml * side;
-            const h = getHeight(pj.x + nx*hw, pj.z + nz*hw) + 0.4;
-            const h2 = getHeight(pj.x + nx*(hw+ew*side), pj.z + nz*(hw+ew*side)) + 0.4;
-            const b = i*4;
-            verts.push(pj.x+nx*hw, h, pj.z+nz*hw);
-            verts.push(pj.x+nx*(hw+ew), h2, pj.z+nz*(hw+ew));
-        }
-        for (let i = 0; i < NUM_RP; i++) {
-            const n = (i+1)%NUM_RP;
-            const b = i*2;
-            const nb = n*2;
-            idx.push(b, nb, b+1, b+1, nb, nb+1);
-        }
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-        g.setIndex(idx);
-        const m = new THREE.Mesh(g, edgeMat);
-        scene.add(m);
-    }
-})();
-
-// Center dashes (double-sided to avoid backface culling)
+// Center dashes (robust orientation)
 const dashMat = new THREE.MeshBasicMaterial({color:0xffffff, side:THREE.DoubleSide});
 const dashGroup = new THREE.Group();
 (function buildDashes() {
     for (let i = 0; i < NUM_RP; i++) {
-        if (i % 3 !== 0) continue;
+        if (i % 4 !== 0) continue;
         const p = roadWP[i], q = roadWP[(i+1)%NUM_RP];
         const dx = q.x-p.x, dz = q.z-p.z;
-        const cx = p.x + dx*0.5, cz = p.z + dz*0.5;
-        const h = getHeight(cx, cz) + 0.45;
-        const m = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 1.8), dashMat);
+        const ml = Math.sqrt(dx*dx+dz*dz) || 1;
+        const cx = p.x+dx*0.5, cz = p.z+dz*0.5;
+        const h = getHeight(cx, cz)+0.45;
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 1.5), dashMat);
         m.position.set(cx, h, cz);
-        m.lookAt(cx+dx, h, cz+dz);
-        m.rotateX(Math.PI/2);
+        m.quaternion.setFromUnitVectors(
+            new THREE.Vector3(0,0,1),
+            new THREE.Vector3(0,1,0)
+        );
+        const up = new THREE.Vector3(0,1,0);
+        const dir = new THREE.Vector3(dx, 0, dz).normalize();
+        const right = new THREE.Vector3().crossVectors(dir, up).normalize();
+        const m4 = new THREE.Matrix4().makeBasis(right, dir, up);
+        m.quaternion.setFromRotationMatrix(m4);
         dashGroup.add(m);
     }
 })();
@@ -636,75 +611,6 @@ function buildFestival() {
     return g;
 }
 scene.add(buildFestival());
-
-// ── WATER ──
-const waterMat = new THREE.MeshStandardMaterial({
-    color: 0x2a8aba, transparent: true, opacity: 0.5,
-    roughness: 0.1, metalness: 0.2, side: THREE.DoubleSide,
-    depthWrite: false,
-});
-function addLake(cx, cz, radius, level) {
-    const water = new THREE.Mesh(new THREE.CircleGeometry(radius, 32), waterMat);
-    water.position.set(cx, level, cz);
-    water.rotation.x = -Math.PI / 2;
-    water.renderOrder = 1;
-    scene.add(water);
-
-    const shoreMat = new THREE.MeshBasicMaterial({color:0x7a6a4a, transparent:true, opacity:0.15, side:THREE.DoubleSide, depthWrite:false});
-    const shore = new THREE.Mesh(new THREE.RingGeometry(radius-1, radius+3, 32), shoreMat);
-    shore.position.set(cx, level-0.1, cz);
-    shore.rotation.x = -Math.PI / 2;
-    shore.renderOrder = 0;
-    scene.add(shore);
-}
-addLake(0, -130, 32, getHeight(0, -130) + 1.5);
-addLake(110, 70, 24, getHeight(110, 70) + 1.2);
-addLake(-100, 90, 22, getHeight(-100, 90) + 1.0);
-addLake(60, -55, 16, getHeight(60, -55) + 0.8);
-addLake(-130, -45, 20, getHeight(-130, -45) + 1.0);
-
-// ── ROCKS ──
-const rockMat = new THREE.MeshStandardMaterial({color:0x777777, roughness:0.9, metalness:0.0});
-const rockG = new THREE.DodecahedronGeometry(0.6);
-(function placeRocks() {
-    for (let i = 0; i < 120; i++) {
-        const a = Math.random()*6.28, r = 30+Math.random()*20;
-        const rx = Math.cos(a)*r + (Math.random()-0.5)*10;
-        const rz = Math.sin(a)*r + (Math.random()-0.5)*10;
-        const hy = getHeight(rx, rz);
-        if (hy < -2 || hy > 12) continue;
-        const s = 0.3 + Math.random() * 0.8;
-        const rock = new THREE.Mesh(rockG, rockMat);
-        rock.position.set(rx, hy+0.1, rz);
-        rock.scale.set(s, s*0.6, s);
-        rock.rotation.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
-        scene.add(rock);
-    }
-})();
-
-// ── ROAD SIGNS ──
-const signMat = new THREE.MeshBasicMaterial({color:0xcc6600, side:THREE.DoubleSide});
-const poleMat = new THREE.MeshBasicMaterial({color:0x888888});
-(function placeSigns() {
-    for (let i = 100; i < NUM_RP; i += 80) {
-        const p = roadWP[i], q = roadWP[(i+50)%NUM_RP];
-        const dx = q.x-p.x, dz = q.z-p.z;
-        const ml = Math.sqrt(dx*dx+dz*dz) || 1;
-        for (const side of [-1, 1]) {
-            const nx = dz/ml * side, nz = -dx/ml * side;
-            const sx = p.x + nx * (ROAD_W/2 + 2);
-            const sz = p.z + nz * (ROAD_W/2 + 2);
-            const hy = getHeight(sx, sz) + 0.3;
-            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 2.5, 4), poleMat);
-            pole.position.set(sx, hy+1.25, sz);
-            scene.add(pole);
-            const board = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.4), signMat);
-            board.position.set(sx, hy+2.6, sz);
-            board.lookAt(sx+dx*0.1, hy+2.6, sz+dz*0.1);
-            scene.add(board);
-        }
-    }
-})();
 
 // ── CAR ──
 const car = new THREE.Group();
