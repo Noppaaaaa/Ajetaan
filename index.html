@@ -78,6 +78,7 @@ scene.fog = new THREE.FogExp2(0x3a6a9a, 0.0012);
 
 const camera = new THREE.PerspectiveCamera(65, innerWidth/innerHeight, 0.1, 800);
 const renderer = new THREE.WebGLRenderer({antialias:true, powerPreference:"high-performance"});
+renderer.setClearColor(0x3a6a9a);
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -90,8 +91,10 @@ document.body.prepend(renderer.domElement);
 // ── POST-PROCESSING ──
 const composer = new EffectComposer(renderer);
 const rPass = new RenderPass(scene, camera);
+rPass.clearColor = true;
+rPass.clearDepth = true;
 composer.addPass(rPass);
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.25, 0.3, 0.15);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.2, 0.25, 0.2);
 composer.addPass(bloom);
 const oPass = new OutputPass();
 composer.addPass(oPass);
@@ -153,7 +156,11 @@ function fbm(x, z, oct) {
 function getHeight(x, z) {
     const h = fbm(x * 0.0018, z * 0.0018, 6) * 45
         + Math.exp(-(x*x+z*z) / 30000) * 10;
-    return h;
+    const ridge = fbm(x * 0.0025, z * 0.0025, 4) * 0.8 + 0.2;
+    const mountain = Math.max(0, ridge - 0.3) * 35;
+    const smoothPeak = Math.max(0, 1 - Math.abs(fbm(x*0.004, z*0.004, 2)) * 1.5);
+    const peaks = smoothPeak * smoothPeak * 25;
+    return h + mountain + peaks;
 }
 
 function getNormal(x, z) {
@@ -179,9 +186,12 @@ function terrainColor(x, z, y, slope) {
     } else if (y < 22) {
         const t = (y - 12) / 10;
         r = 0.51 + t * 0.10 + n; g = 0.57 - t * 0.08 + n; b = 0.16 + t * 0.03;
+    } else if (y < 40) {
+        const t = Math.min(1, (y - 22) / 18);
+        r = 0.61 + t * 0.15 + n; g = 0.49 - t * 0.15 + n; b = 0.19 - t * 0.05;
     } else {
-        const t = Math.min(1, (y - 22) / 12);
-        r = 0.61 + t * 0.18 + n; g = 0.49 - t * 0.08 + n; b = 0.19 - t * 0.02;
+        const t = Math.min(1, (y - 40) / 30);
+        r = 0.76 - t * 0.15 + n; g = 0.34 - t * 0.10 + n; b = 0.14 - t * 0.05;
     }
     const shade = 1 - slope * 0.25;
     return [
@@ -360,7 +370,7 @@ function buildTreesForChunk(cx, cz) {
         const tx = ox + (hx - 0.5) * CHUNK_SIZE * 0.85;
         const tz = oz + (hz - 0.5) * CHUNK_SIZE * 0.85;
         const hy = getHeight(tx, tz);
-        if (hy < -3 || hy > 26) continue;
+        if (hy < -3 || hy > 35) continue;
         let nearRoad = false;
         for (const rp of roadWP) {
             if ((tx-rp.x)**2+(tz-rp.z)**2 < 100) { nearRoad = true; break; }
