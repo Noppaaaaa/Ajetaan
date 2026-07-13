@@ -24,6 +24,19 @@ canvas{display:block}
 #loading .bar{width:200px;height:2px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden}
 #loading .fill{height:100%;width:0%;background:linear-gradient(90deg,#ff6b35,#f7c948);animation:loadBar 2s ease forwards}
 @keyframes loadBar{to{width:100%}}
+#settings-btn{position:fixed;top:20px;right:20px;width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.45);color:#fff;font-size:18px;cursor:pointer;z-index:50;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .2s;backdrop-filter:blur(6px)}
+#settings-btn:hover{background:rgba(255,255,255,.12);transform:scale(1.08)}
+#settings-panel{position:fixed;top:66px;right:20px;width:240px;background:rgba(10,10,20,.88);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:18px 20px;z-index:50;display:none;backdrop-filter:blur(8px);color:#ccc;font-size:13px;letter-spacing:.5px}
+#settings-panel.open{display:block}
+#settings-panel h3{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:rgba(255,255,255,.3);margin:0 0 14px 0;text-align:center}
+#settings-panel label{display:block;margin-bottom:4px;font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1px}
+#settings-panel input[type=range]{width:100%;margin:4px 0 14px 0;-webkit-appearance:none;background:rgba(255,255,255,.08);height:3px;border-radius:2px;outline:none}
+#settings-panel input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,#ff6b35,#f7c948);cursor:pointer;border:none}
+#settings-panel .val{float:right;color:#ff6b35;font-weight:600}
+#settings-panel .colors{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+#settings-panel .colors button{width:28px;height:28px;border-radius:50%;border:2px solid transparent;cursor:pointer;transition:border-color .2s,transform .15s;padding:0}
+#settings-panel .colors button:hover{transform:scale(1.12)}
+#settings-panel .colors button.sel{border-color:#fff}
 </style>
 </head>
 <body>
@@ -35,6 +48,14 @@ canvas{display:block}
 </div>
 <div id="gear">N</div>
 <div id="rpm-bar"><div id="rpm-fill"></div></div>
+<button id="settings-btn">&#9881;</button>
+<div id="settings-panel">
+    <h3>Asetukset</h3>
+    <label>Näköetäisyys <span class="val" id="rd-val">4</span></label>
+    <input type="range" id="rd-slider" min="2" max="8" step="1" value="4">
+    <label>Auton väri</label>
+    <div class="colors" id="car-colors"></div>
+</div>
 
 <script type="importmap">
 {"imports":{
@@ -45,10 +66,7 @@ canvas{display:block}
 
 <script type="module">
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
 
 // ── CONFIG ──
 const MAX_SPEED = 230;
@@ -88,16 +106,7 @@ renderer.toneMappingExposure = 0.9;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.prepend(renderer.domElement);
 
-// ── POST-PROCESSING ──
-const composer = new EffectComposer(renderer);
-const rPass = new RenderPass(scene, camera);
-rPass.clearColor = true;
-rPass.clearDepth = true;
-composer.addPass(rPass);
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.2, 0.25, 0.2);
-composer.addPass(bloom);
-const oPass = new OutputPass();
-composer.addPass(oPass);
+
 
 // ── LIGHTING ──
 const hemi = new THREE.HemisphereLight(0x88ccff, 0x445533, 0.5);
@@ -1080,12 +1089,64 @@ function update(dt) {
     updateGrass(carPos.x, carPos.z);
 }
 
+// ── SETTINGS ──
+const settingsBtn = document.getElementById('settings-btn');
+const settingsPanel = document.getElementById('settings-panel');
+const rdSlider = document.getElementById('rd-slider');
+const rdVal = document.getElementById('rd-val');
+
+settingsBtn.addEventListener('click', () => settingsPanel.classList.toggle('open'));
+
+rdSlider.addEventListener('input', () => {
+    const v = parseInt(rdSlider.value);
+    rdVal.textContent = v;
+    if (v !== VIEW_R) {
+        VIEW_R = v;
+        // Clear all chunks
+        for (const [k, mesh] of activeChunks) { scene.remove(mesh); mesh.geometry.dispose(); }
+        activeChunks.clear();
+        for (const [k, g] of treeChunks) { scene.remove(g); }
+        treeChunks.clear();
+        for (const [k, g] of grassChunks) { if (g) scene.remove(g); }
+        grassChunks.clear();
+        updateChunks(carPos.x, carPos.z);
+        updateTrees(carPos.x, carPos.z);
+        updateGrass(carPos.x, carPos.z);
+    }
+});
+
+const carColors = [
+    {name:'Punainen', hex:'#cc2222'},
+    {name:'Sininen', hex:'#2266cc'},
+    {name:'Vihreä', hex:'#22aa44'},
+    {name:'Musta', hex:'#222222'},
+    {name:'Valkoinen', hex:'#eeeeee'},
+    {name:'Keltainen', hex:'#ddbb22'},
+    {name:'Oranssi', hex:'#ee6633'},
+    {name:'Violetti', hex:'#8833cc'},
+];
+const ccContainer = document.getElementById('car-colors');
+let selColorBtn = null;
+for (const c of carColors) {
+    const btn = document.createElement('button');
+    btn.style.background = c.hex;
+    btn.title = c.name;
+    if (c.hex === '#cc2222') { btn.classList.add('sel'); selColorBtn = btn; }
+    btn.addEventListener('click', () => {
+        if (selColorBtn) selColorBtn.classList.remove('sel');
+        btn.classList.add('sel');
+        selColorBtn = btn;
+        bMat.color.set(c.hex);
+    });
+    ccContainer.appendChild(btn);
+}
+
 // ── GAME LOOP ──
 const clock = new THREE.Clock();
 function animate() {
     requestAnimationFrame(animate);
     update(clock.getDelta());
-    composer.render();
+    renderer.render(scene, camera);
 }
 
 // ── START ──
@@ -1098,7 +1159,6 @@ window.addEventListener('resize', () => {
     camera.aspect = w/h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
-    composer.setSize(w, h);
 });
 </script>
 </body>
