@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Ääretön Tie</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="name-prompt">
+    <div class="np-box">
+        <div class="np-title">Ä Ä R E T Ö N &nbsp; T I E</div>
+        <div class="np-sub">ENDLESS DRIVE</div>
+        <input type="text" id="name-input" maxlength="16" placeholder="Kuljettaja" autofocus>
+        <div class="np-colors" id="np-colors"></div>
+        <button id="name-btn">AJA</button>
+    </div>
+</div>
+
+<div id="loading">
+    <div class="lg">Ä Ä R E T Ö N &nbsp; T I E</div>
+    <div class="bar"><div class="fill"></div></div>
+    <div class="sub">GENEROIDAAN MAAILMAA</div>
+</div>
+
+<div id="title"><h1>ÄÄRETÖN TIE</h1><span>ENDLESS DRIVE</span></div>
+<div id="world-clock"><span id="clock-time">--:--:--</span><span id="clock-label">SEURAAVA KARTTA</span></div>
+<canvas id="compass" width="90" height="90"></canvas>
+
+<div id="hint">W / ↑ &nbsp;Kaasu &nbsp;·&nbsp; S / ↓ &nbsp;Jarru &nbsp;·&nbsp; A · D &nbsp;Ohjaus &nbsp;·&nbsp; VÄLILYÖNTI &nbsp;Käsijarru &nbsp;·&nbsp; C &nbsp;Kamera &nbsp;·&nbsp; R &nbsp;Reset</div>
+
+<div id="hud"><div id="speed">0</div><div id="unit">KM/H</div></div>
+<div id="gear">N<small>VAIHDE</small></div>
+
+<div id="online"><span class="dot"></span><span id="online-n">Yksinpeli</span></div>
+
+<div id="chat">
+    <div id="chat-head"><span>CHAT</span><span id="chat-close">&#8722;</span></div>
+    <div id="chat-msgs"></div>
+    <div id="chat-input-row"><input type="text" id="chat-input" maxlength="100" placeholder="Kirjoita..."><button id="chat-send">></button></div>
+</div>
+<div id="chat-reopen" class="hidden">CHAT</div>
+
+<canvas id="minimap" width="140" height="140"></canvas>
+
+<button id="settings-btn">&#9881;</button>
+<div id="panel">
+    <h3>Asetukset</h3>
+    <label>Näköetäisyys <span class="val" id="rd-val">48</span></label>
+    <input type="range" id="rd" min="4" max="96" step="1" value="48">
+    <label style="margin-top:10px">Chunkkeja/kuva <span class="val" id="cpf-val">1</span></label>
+    <input type="range" id="chunks-pf" min="1" max="5" step="1" value="1">
+    <label>Kamera</label>
+    <div class="seg" id="cam-seg">
+        <button data-cam="0" class="on">Seuraa</button>
+        <button data-cam="1">Lähi</button>
+        <button data-cam="2">Konepelti</button>
+    </div>
+    <label>Auton väri</label>
+    <div class="colors" id="colors"></div>
+    <label style="margin-top:14px;display:flex;align-items:center;gap:8px"><input type="checkbox" id="show-debug"> <span>FPS / Ping</span></label>
+</div>
+
+<div id="vignette"></div>
+<div id="debug" class="hidden"><span id="fps-val">0</span> FPS &nbsp; <span id="ping-val">--</span> ms</div>
+
+<script>
+// Instant name prompt — runs inline before module script loads
+const _npColors=[['#2b6cc4','Sininen'],['#c42b2b','Punainen'],['#e0e0e6','Valkoinen'],['#1a1c22','Musta'],['#2fa04a','Vihreä'],['#e0a020','Keltainen'],['#e06a20','Oranssi'],['#8a8f99','Hopea']];
+const _npCC=document.getElementById('np-colors'); let _npSel=null;
+for(const [h] of _npColors){
+    const b=document.createElement('button'); b.style.background=h;
+    if(h==='#2b6cc4'){ b.classList.add('sel'); _npSel=b; }
+    b.addEventListener('click',()=>{ if(_npSel)_npSel.classList.remove('sel'); b.classList.add('sel'); _npSel=b; window.__pColor=h; });
+    _npCC.appendChild(b);
+}
+window.__pColor='#2b6cc4';
+document.getElementById('name-btn').addEventListener('click',function n(){
+    window.__pName=document.getElementById('name-input').value.trim()||'Kuljettaja';
+    document.getElementById('name-prompt').classList.add('hidden');
+});
+document.getElementById('name-input').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('name-btn').click();});
+</script>
+<script type="importmap">
+{"imports":{
+"three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+"three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/",
+"mqtt":"https://unpkg.com/mqtt@5.10.1/dist/mqtt.esm.js"
+}}
+</script>
+<script>
+// Store server URL so game.js can find the model files
+window.__CAR_URL = window.location.origin + '/auto/car.obj';
+</script>
+<script type="module" src="game.js"></script>
+</body>
+</html>
