@@ -69,6 +69,8 @@
 // Instant name prompt — runs inline before module script loads
 const _npColors=[['#2b6cc4','Sininen'],['#c42b2b','Punainen'],['#e0e0e6','Valkoinen'],['#1a1c22','Musta'],['#2fa04a','Vihreä'],['#e0a020','Keltainen'],['#e06a20','Oranssi'],['#8a8f99','Hopea']];
 const _npCC=document.getElementById('np-colors'); let _npSel=null;
+const _savedName=localStorage.getItem('playerName');
+if(_savedName) document.getElementById('name-input').value=_savedName;
 for(const [h] of _npColors){
     const b=document.createElement('button'); b.style.background=h;
     if(h==='#2b6cc4'){ b.classList.add('sel'); _npSel=b; }
@@ -78,6 +80,7 @@ for(const [h] of _npColors){
 window.__pColor='#2b6cc4';
 document.getElementById('name-btn').addEventListener('click',function n(){
     window.__pName=document.getElementById('name-input').value.trim()||'Kuljettaja';
+    localStorage.setItem('playerName',window.__pName);
     document.getElementById('name-prompt').classList.add('hidden');
 });
 document.getElementById('name-input').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('name-btn').click();});

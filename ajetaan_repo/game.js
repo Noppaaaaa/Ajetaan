@@ -682,6 +682,7 @@ function updateChunks(px,pz){
     const need=new Set();
     for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
         const ck=(cx+dx)+','+(cz+dz);
+        if(chunks.has(ck)){ need.add(ck); continue; }
         const wx=(cx+dx+0.5)*CHUNK-px, wz=(cz+dz+0.5)*CHUNK-pz;
         const d2=wx*wx+wz*wz;
         if(d2<9*CHUNK*CHUNK){ need.add(ck); continue; }
