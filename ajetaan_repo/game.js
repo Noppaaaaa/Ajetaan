@@ -13,7 +13,7 @@ let playerName = '';
 const SEA          = 0;        // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
-let   VIEW_R       = 24;       // chunk view radius (mutable via settings)
+let   VIEW_R       = 40;       // chunk view radius (mutable via settings)
 let   _chunksPerFrame = 2;    // chunks built per frame (mutable via settings)
 let   _canDrive = false;     // true after name prompt submitted
 const ROAD_STEP    = 12;       // spacing between road waypoints
@@ -21,6 +21,7 @@ const ROAD_HALF    = 5.6;      // road half width (flat part)
 const CARVE_R      = 30;       // terrain smoothing radius around road
 const RCELL        = 24;       // road spatial-hash cell size
 const LOD_R        = 15;       // chunks within this radius get full quality
+const FAR_LOD_R    = 25;       // chunks beyond this get bare terrain only (no vegetation)
 
 // Car / physics
 const MAX_SPEED    = 84;       // m/s (~302 km/h)
@@ -500,7 +501,7 @@ function buildChunk(cx,cz,lod){
     const rec={ objs:[], lod };
 
     // ── terrain mesh ──
-    const seg=lod?Math.ceil(SEG/2):SEG;
+    const seg=lod===0?SEG:(lod===1?Math.ceil(SEG/2):Math.ceil(SEG/3));
     const geo=new THREE.PlaneGeometry(CHUNK,CHUNK,seg,seg); geo.rotateX(-Math.PI/2);
     const pos=geo.attributes.position.array;
     for(let i=0;i<pos.length;i+=3) pos[i+1]=getHeight(ox+pos[i], oz+pos[i+2]);
@@ -515,11 +516,12 @@ function buildChunk(cx,cz,lod){
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col,3));
     const mesh=new THREE.Mesh(geo, terrainMat);
-    mesh.position.set(ox,0,oz); mesh.receiveShadow=true;
+    mesh.position.set(ox,0,oz); mesh.receiveShadow=lod<2;
     scene.add(mesh); rec.objs.push(mesh);
 
-    // ── scatter vegetation / rocks (half density for LOD) ──
-    const density = lod ? 0.5 : 1;
+    if(lod<2){
+        // ── scatter vegetation / rocks (half density for LOD) ──
+        const density = lod ? 0.5 : 1;
     const rng=mulberry32((cx*73856093)^(cz*19349663));
     const pineM=[], leafM=[], rockM=[], bushM=[], collide=[];
     const dummy=new THREE.Object3D();
@@ -655,6 +657,9 @@ function buildChunk(cx,cz,lod){
     }
 
     collideByChunk.set(cx+','+cz, collide);
+    } else {
+        collideByChunk.set(cx+','+cz, []);
+    }
     return rec;
 }
 
@@ -680,7 +685,8 @@ function updateChunks(px,pz){
             chunks.delete(k); collideByChunk.delete(k);
         } else {
             const [x,z]=k.split(',').map(Number);
-            const lod=Math.max(Math.abs(x-cx),Math.abs(z-cz))>LOD_R?1:0;
+            const dist=Math.max(Math.abs(x-cx),Math.abs(z-cz));
+            const lod=dist>FAR_LOD_R?2:(dist>LOD_R?1:0);
             if(rec.lod!==lod){
                 for(const o of rec.objs){ scene.remove(o); o.geometry?.dispose?.(); }
                 chunks.delete(k);
@@ -691,7 +697,8 @@ function updateChunks(px,pz){
     for(const k of need){
         if(!chunks.has(k) && !_chunkBuildQueue.has(k)){
             const [x,z]=k.split(',').map(Number);
-            const lod=Math.max(Math.abs(x-cx),Math.abs(z-cz))>LOD_R?1:0;
+            const dist=Math.max(Math.abs(x-cx),Math.abs(z-cz));
+            const lod=dist>FAR_LOD_R?2:(dist>LOD_R?1:0);
             _chunkBuildQueue.set(k,{x,z,lod});
         }
     }
