@@ -13,8 +13,8 @@ let playerName = '';
 const SEA          = 0;        // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
-let   VIEW_R       = 40;       // chunk view radius (mutable via settings)
-let   _chunksPerFrame = 2;    // chunks built per frame (mutable via settings)
+let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
+let   _chunksPerFrame = 1;    // chunks built per frame (mutable via settings)
 let   _canDrive = false;     // true after name prompt submitted
 const ROAD_STEP    = 12;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
