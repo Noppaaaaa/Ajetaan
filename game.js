@@ -420,6 +420,11 @@ const rockMat  = new THREE.MeshStandardMaterial({ color:0x6b6b66, roughness:0.95
 const bushGeo  = new THREE.IcosahedronGeometry(0.6,1).scale(1,0.55,0.85);
 const bushMat  = new THREE.MeshStandardMaterial({ color:0x3a7a2a, roughness:0.9, metalness:0, flatShading:true });
 
+// LOD versions (fewer polygons, no trunk/grass/bushes)
+const lodPineGeo = new THREE.ConeGeometry(1.5,4.4,5).translate(0,3.9,0);
+const lodLeafGeo = new THREE.IcosahedronGeometry(1.9,0).scale(1,0.9,1).translate(0,3.6,0);
+const lodRockGeo = new THREE.BoxGeometry(0.7,0.5,0.8);
+
 // blade geometry for grass
 const bladeGeo = (()=>{
     const g=new THREE.BufferGeometry();
@@ -608,37 +613,44 @@ function buildChunk(cx,cz,lod){
         im.instanceMatrix.needsUpdate=true; im.castShadow=cast; im.receiveShadow=false;
         im.frustumCulled=true; scene.add(im); rec.objs.push(im);
     }
-    instanced(trunkGeo, trunkMat, pineM.concat(leafM), true);
-    instanced(pineCanGeo, pineMat, pineM, true);
-    instanced(leafCanGeo, leafMat, leafM, true);
-    instanced(rockGeo, rockMat, rockM, true);
-    instanced(bushGeo, bushMat, bushM, true);
+    if(lod){
+        // LOD: simplified trees (canopy only), box rocks, no grass/bushes
+        instanced(lodPineGeo, pineMat, pineM, false);
+        instanced(lodLeafGeo, leafMat, leafM, false);
+        instanced(lodRockGeo, rockMat, rockM, false);
+    } else {
+        instanced(trunkGeo, trunkMat, pineM.concat(leafM), true);
+        instanced(pineCanGeo, pineMat, pineM, true);
+        instanced(leafCanGeo, leafMat, leafM, true);
+        instanced(rockGeo, rockMat, rockM, true);
+        instanced(bushGeo, bushMat, bushM, true);
 
-    if(grassPts.length){
-        const n=grassPts.length/3;
-        const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
-        const d=new THREE.Object3D();
-        for(let i=0;i<n;i++){
-            d.position.set(grassPts[i*3],grassPts[i*3+1],grassPts[i*3+2]);
-            const s=0.7+Math.random()*1.3; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
-            d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
-            im.setMatrixAt(i,d.matrix);
+        if(grassPts.length){
+            const n=grassPts.length/3;
+            const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
+            const d=new THREE.Object3D();
+            for(let i=0;i<n;i++){
+                d.position.set(grassPts[i*3],grassPts[i*3+1],grassPts[i*3+2]);
+                const s=0.7+Math.random()*1.3; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
+                d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
+                im.setMatrixAt(i,d.matrix);
+            }
+            im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
+            scene.add(im); rec.objs.push(im);
         }
-        im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
-        scene.add(im); rec.objs.push(im);
-    }
-    if(grassSmallPts.length){
-        const n=grassSmallPts.length/3;
-        const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
-        const d=new THREE.Object3D();
-        for(let i=0;i<n;i++){
-            d.position.set(grassSmallPts[i*3],grassSmallPts[i*3+1],grassSmallPts[i*3+2]);
-            const s=0.35+Math.random()*0.65; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
-            d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
-            im.setMatrixAt(i,d.matrix);
+        if(grassSmallPts.length){
+            const n=grassSmallPts.length/3;
+            const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
+            const d=new THREE.Object3D();
+            for(let i=0;i<n;i++){
+                d.position.set(grassSmallPts[i*3],grassSmallPts[i*3+1],grassSmallPts[i*3+2]);
+                const s=0.35+Math.random()*0.65; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
+                d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
+                im.setMatrixAt(i,d.matrix);
+            }
+            im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
+            scene.add(im); rec.objs.push(im);
         }
-        im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
-        scene.add(im); rec.objs.push(im);
     }
 
     collideByChunk.set(cx+','+cz, collide);
