@@ -1046,7 +1046,7 @@ function update(dt){
     // ── tree / rock collision ──
     const colR=3.5;
     const ckx=Math.round(pos.x/CHUNK), ckz=Math.round(pos.z/CHUNK);
-    for(let dx=-1;dx<=1;dx++) for(let dz=-1;dz<=1;dz++){
+    for(let dx=-4;dx<=4;dx++) for(let dz=-4;dz<=4;dz++){
         const col=collideByChunk.get((ckx+dx)+','+(ckz+dz));
         if(!col) continue;
         for(const t of col){
