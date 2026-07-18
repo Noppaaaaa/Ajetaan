@@ -766,6 +766,9 @@ function buildRibbon(a,b,halfW,yOff){
     const v=[], idx=[]; let vc=0;
     for(let i=a;i<b;i++){
         const p=roadWP[i], q=roadWP[i+1]; if(!p||!q) continue;
+        // skip if chunk under this segment isn't loaded
+        const cx=Math.round((p.x+q.x)/2/CHUNK), cz=Math.round((p.z+q.z)/2/CHUNK);
+        if(!chunks.has(cx+','+cz)) continue;
         const dx=q.x-p.x, dz=q.z-p.z; const l=Math.hypot(dx,dz)||1;
         const nx=-dz/l, nz=dx/l;
         const cur=vc;
