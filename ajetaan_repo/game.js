@@ -285,6 +285,13 @@ fillLight.position.copy(sunDir).multiplyScalar(-1); scene.add(fillLight);
         }`
     });
     scene.add(new THREE.Mesh(new THREE.SphereGeometry(2600,32,20), mat));
+    // visible sun
+    const sunMesh=new THREE.Mesh(
+        new THREE.SphereGeometry(18,16,16),
+        new THREE.MeshBasicMaterial({color:0xfff5e0})
+    );
+    sunMesh.position.copy(sunDir).multiplyScalar(2500);
+    scene.add(sunMesh);
 })();
 
 // ── 3D clouds: lit puffball clusters that drift and follow the player ──
@@ -418,6 +425,8 @@ const rockGeo    = new THREE.DodecahedronGeometry(1,0).scale(1,0.7,1.1);
 const trunkMat = new THREE.MeshStandardMaterial({ color:0x4a3524, roughness:0.9, metalness:0 });
 const pineMat  = new THREE.MeshStandardMaterial({ color:0x2f5d33, roughness:0.85, metalness:0, flatShading:true });
 const leafMat  = new THREE.MeshStandardMaterial({ color:0x4a7c35, roughness:0.85, metalness:0, flatShading:true });
+const bigLeafGeo = new THREE.IcosahedronGeometry(2.85,1).scale(1,0.9,1).translate(0,5.4,0);  // 1.5x leaf tree
+const bigLeafMat = new THREE.MeshStandardMaterial({ color:0x3d6e2e, roughness:0.85, metalness:0, flatShading:true });
 const rockMat  = new THREE.MeshStandardMaterial({ color:0x6b6b66, roughness:0.95, metalness:0, flatShading:true });
 const bushGeo  = new THREE.IcosahedronGeometry(0.6,1).scale(1,0.55,0.85);
 const bushMat  = new THREE.MeshStandardMaterial({ color:0x3a7a2a, roughness:0.9, metalness:0, flatShading:true });
@@ -440,13 +449,10 @@ const grassMat = new THREE.MeshStandardMaterial({ color:0x6a9a4a, roughness:1, m
 const grassWind = { value:0 };
 const grassCarPos = { value:new THREE.Vector3(0,0,0) };
 let windTime = 0;
-const grassFlattenTex = { value: flattenTex };
 grassMat.onBeforeCompile = (sh)=>{
     sh.uniforms.uWind = grassWind;
     sh.uniforms.uCarPos = grassCarPos;
-    sh.uniforms.uFlattenTex = grassFlattenTex;
-    sh.uniforms.uTrackCenter = uTrackCenter;
-    sh.vertexShader = 'uniform float uWind;\nuniform vec3 uCarPos;\nuniform sampler2D uFlattenTex;\nuniform vec2 uTrackCenter;\n' + sh.vertexShader.replace(
+    sh.vertexShader = 'uniform float uWind;\nuniform vec3 uCarPos;\n' + sh.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
          float bH = position.y;
@@ -457,10 +463,7 @@ grassMat.onBeforeCompile = (sh)=>{
          transformed.z += cos(uWind*1.3 + ph*0.8) * 0.28 * bH * gust;
          vec3 toCar = wp4.xyz - uCarPos;
          float carDist = length(toCar.xz);
-         float flattenCar = 1.0 - smoothstep(0.5, 2.8, carDist);
-         vec2 trackUV = vec2((wp4.x - uTrackCenter.x) / 512.0 + 0.5, (wp4.z - uTrackCenter.y) / 512.0 + 0.5);
-         float flattenTexVal = texture2D(uFlattenTex, trackUV).r;
-         float flatten = max(flattenCar, flattenTexVal);
+         float flatten = 1.0 - smoothstep(0.5, 2.8, carDist);
          vec2 carDir = carDist < 0.001 ? vec2(0.0) : toCar.xz / carDist;
          transformed.y -= bH * flatten * 0.7;
          transformed.x += carDir.x * flatten * bH * 0.2;
@@ -523,7 +526,7 @@ function buildChunk(cx,cz,lod){
         // ── scatter vegetation / rocks (half density for LOD) ──
         const density = lod ? 0.5 : 1;
     const rng=mulberry32((cx*73856093)^(cz*19349663));
-    const pineM=[], leafM=[], rockM=[], bushM=[], collide=[];
+    const pineM=[], leafM=[], bigLeafM=[], rockM=[], bushM=[], collide=[];
     const dummy=new THREE.Object3D();
     const grassPts=[], grassSmallPts=[];
 
@@ -555,7 +558,9 @@ function buildChunk(cx,cz,lod){
         dummy.scale.set(s,s*(0.85+rng()*0.35),s);
         dummy.rotation.set(0,rng()*6.28,0);
         dummy.updateMatrix();
-        (isPine?pineM:leafM).push(dummy.matrix.clone());
+        if(isPine){ pineM.push(dummy.matrix.clone()); }
+        else if(rng()<1/6){ bigLeafM.push(dummy.matrix.clone()); }   // big round tree 1/5
+        else { leafM.push(dummy.matrix.clone()); }
         collide.push({x:gx,z:gz,r:0.5*s});
     }
     // ── bushes ──
@@ -617,14 +622,15 @@ function buildChunk(cx,cz,lod){
         im.frustumCulled=true; scene.add(im); rec.objs.push(im);
     }
     if(lod){
-        // LOD: simplified trees (canopy only), box rocks, no grass/bushes
         instanced(lodPineGeo, pineMat, pineM, false);
         instanced(lodLeafGeo, leafMat, leafM, false);
+        instanced(lodLeafGeo, bigLeafMat, bigLeafM, false);
         instanced(lodRockGeo, rockMat, rockM, false);
     } else {
-        instanced(trunkGeo, trunkMat, pineM.concat(leafM), true);
+        instanced(trunkGeo, trunkMat, pineM.concat(leafM).concat(bigLeafM), true);
         instanced(pineCanGeo, pineMat, pineM, true);
         instanced(leafCanGeo, leafMat, leafM, true);
+        instanced(bigLeafGeo, bigLeafMat, bigLeafM, true);
         instanced(rockGeo, rockMat, rockM, true);
         instanced(bushGeo, bushMat, bushM, true);
 
