@@ -1070,7 +1070,12 @@ function update(dt){
     }
 
     // ── tire tracks (rear wheels only, on solid ground) ──
-    if(vabs>0.5 && onRoad){
+    let rearOnRoad = false;
+    for(const w of wheels) if(w.z<0){
+        const wxg=pos.x+F2.x*w.z+R2.x*w.x, wzg=pos.z+F2.z*w.z+R2.z*w.x;
+        if(roadInfo(wxg,wzg).d < ROAD_HALF+1.5) rearOnRoad = true;
+    }
+    if(vabs>0.5 && rearOnRoad){
         trackTimer+=dt;
         if(trackTimer>0.045){
             trackTimer=0;
