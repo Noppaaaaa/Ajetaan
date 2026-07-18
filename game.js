@@ -665,6 +665,8 @@ function buildChunk(cx,cz,lod){
 
 let camChunkX=0, camChunkZ=0;
 const _chunkBuildQueue=new Map();
+const _upgrade21=[], _upgrade10=[];
+const _upgrading=new Set();
 let _chunkTick=0;
 const _fwd = new THREE.Vector3();
 function updateChunks(px,pz){
@@ -687,7 +689,10 @@ function updateChunks(px,pz){
             const [x,z]=k.split(',').map(Number);
             const dist=Math.max(Math.abs(x-cx),Math.abs(z-cz));
             const lod=dist>FAR_LOD_R?2:(dist>LOD_R?1:0);
-            if(rec.lod!==lod){
+            if(lod<rec.lod && !_upgrading.has(k)){
+                (rec.lod===2?_upgrade21:_upgrade10).push({key:k,x,z});
+                _upgrading.add(k);
+            } else if(lod>rec.lod){
                 for(const o of rec.objs){ scene.remove(o); o.geometry?.dispose?.(); }
                 chunks.delete(k);
                 _chunkBuildQueue.set(k,{x,z,lod});
@@ -720,6 +725,8 @@ function regenerateWorld(epoch) {
     if (roadMesh) { scene.remove(roadMesh); roadMesh.geometry.dispose(); roadMesh = null; }
     if (lineMesh) { scene.remove(lineMesh); lineMesh.geometry.dispose(); lineMesh = null; }
     roadBuiltIdx = -99999;
+    _chunkBuildQueue.clear();
+    _upgrade21.length=0; _upgrade10.length=0; _upgrading.clear();
     // Reset tracks
     trackCX = 0; trackCZ = 0;
     resetTrackMaps();
@@ -1517,6 +1524,20 @@ if(_chunkBuildQueue.has(ck)){
 camPos.set(pos.x, pos.y+6, pos.z-10); camera.position.copy(camPos);
 
 const clock=new THREE.Clock();
+function processLodUpgrades(){
+    function drain(q,toLod){
+        let n=_chunksPerFrame;
+        while(n-->0 && q.length){
+            const job=q.shift();
+            const rec=chunks.get(job.key);
+            if(rec){ for(const o of rec.objs){ scene.remove(o); o.geometry?.dispose?.(); } chunks.delete(job.key); }
+            _chunkBuildQueue.set(job.key,{x:job.x,z:job.z,lod:toLod});
+            _upgrading.delete(job.key);
+        }
+    }
+    drain(_upgrade21,1);
+    drain(_upgrade10,0);
+}
 function processChunkQueue(){
     let n=_chunksPerFrame;
     while(n-->0 && _chunkBuildQueue.size>0){
@@ -1534,7 +1555,7 @@ function processChunkQueue(){
         if(chunks.size>=50) document.getElementById('loading').classList.add('hidden');
     }
 }
-function animate(){ requestAnimationFrame(animate); update(clock.getDelta()); renderer.render(scene,camera); processChunkQueue(); }
+function animate(){ requestAnimationFrame(animate); update(clock.getDelta()); renderer.render(scene,camera); processLodUpgrades(); processChunkQueue(); }
 animate();
 
 setTimeout(()=>document.getElementById('loading').classList.add('hidden'), 400);
