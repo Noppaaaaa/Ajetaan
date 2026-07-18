@@ -13,8 +13,8 @@ let playerName = '';
 const SEA          = 0;        // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
-let   VIEW_R       = 48;       // chunk view radius (mutable via settings)
-let   _chunksPerFrame = 1;    // chunks built per frame (mutable via settings)
+let   VIEW_R       = 24;       // chunk view radius (mutable via settings)
+let   _chunksPerFrame = 2;    // chunks built per frame (mutable via settings)
 let   _canDrive = false;     // true after name prompt submitted
 const ROAD_STEP    = 12;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
@@ -33,9 +33,61 @@ const TRACK        = 1.7;
 const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
 
-// ── World regeneration (2-hour epoch) ──
+// ── World regeneration (2-hour epoch + idle detection) ──
 const WORLD_MS = 7200000;
+const IDLE_MS = 600000;  // 10 min ilman pelaajia → uusi kartta
 let worldSeed = Math.floor(Date.now() / WORLD_MS);
+let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
+
+// ── Persistent flatten map & tire tracks ──
+const TRACK_HALF = 256;          // world meters from canvas center
+const TRACK_SIZE = 2048;         // canvas size (px)
+let trackCX = 0, trackCZ = 0;   // canvas center in world coords
+const flattenCanvas = document.createElement('canvas');
+flattenCanvas.width = flattenCanvas.height = TRACK_SIZE;
+const flCtx = flattenCanvas.getContext('2d');
+flCtx.fillStyle = '#000'; flCtx.fillRect(0, 0, TRACK_SIZE, TRACK_SIZE);
+const flattenTex = new THREE.CanvasTexture(flattenCanvas);
+flattenTex.wrapS = flattenTex.wrapT = THREE.ClampToEdgeWrapping;
+const trackCanvas = document.createElement('canvas');
+trackCanvas.width = trackCanvas.height = TRACK_SIZE;
+const trCtx = trackCanvas.getContext('2d');
+trCtx.fillStyle = '#fff'; trCtx.fillRect(0, 0, TRACK_SIZE, TRACK_SIZE);
+const trackTex = new THREE.CanvasTexture(trackCanvas);
+trackTex.wrapS = trackTex.wrapT = THREE.ClampToEdgeWrapping;
+const uTrackCenter = { value: new THREE.Vector2(0, 0) };
+function scrollCanvas(ctx, bg, ocx, ocz, ncx, ncz){
+    const dx=Math.round((ocx-ncx)/TRACK_HALF*TRACK_SIZE/2);
+    const dz=Math.round((ocz-ncz)/TRACK_HALF*TRACK_SIZE/2);
+    if(!dx&&!dz)return;
+    const d=ctx.getImageData(0,0,TRACK_SIZE,TRACK_SIZE);
+    ctx.fillStyle=bg; ctx.fillRect(0,0,TRACK_SIZE,TRACK_SIZE); ctx.putImageData(d,dx,dz);
+}
+function recenterTrackMaps(cx,cz){
+    scrollCanvas(flCtx,'#000',trackCX,trackCZ,cx,cz);
+    scrollCanvas(trCtx,'#fff',trackCX,trackCZ,cx,cz);
+    trackCX=cx; trackCZ=cz; uTrackCenter.value.set(cx,cz);
+    flattenTex.needsUpdate=true; trackTex.needsUpdate=true;
+}
+function drawWheelMark(wx,wz,strength){
+    const u=((wx-trackCX)/TRACK_HALF+1)*0.5, v=((wz-trackCZ)/TRACK_HALF+1)*0.5;
+    const px=Math.round(u*TRACK_SIZE), py=Math.round(v*TRACK_SIZE);
+    if(px<-20||px>TRACK_SIZE+20||py<-20||py>TRACK_SIZE+20)return;
+    flCtx.fillStyle='#fff'; flCtx.beginPath(); flCtx.arc(px,py,8,0,Math.PI*2); flCtx.fill();
+    trCtx.fillStyle='rgba(65,55,40,0.4)'; trCtx.beginPath(); trCtx.arc(px,py,4,0,Math.PI*2); trCtx.fill();
+}
+let trackOverlay = null;
+function initTrackOverlay(){
+    const g=new THREE.PlaneGeometry(TRACK_HALF*2,TRACK_HALF*2,1,1);
+    g.rotateX(-Math.PI/2);
+    const m=new THREE.MeshBasicMaterial({map:trackTex,transparent:true,opacity:0.35,depthWrite:false,blending:THREE.MultiplyBlending,side:THREE.DoubleSide});
+    trackOverlay=new THREE.Mesh(g,m); trackOverlay.renderOrder=1; scene.add(trackOverlay);
+}
+function resetTrackMaps(){
+    flCtx.fillStyle='#000'; flCtx.fillRect(0,0,TRACK_SIZE,TRACK_SIZE);
+    trCtx.fillStyle='#fff'; trCtx.fillRect(0,0,TRACK_SIZE,TRACK_SIZE);
+    flattenTex.needsUpdate=true; trackTex.needsUpdate=true;
+}
 let worldEpoch = worldSeed;
 let worldClockTimer = 0;
 const worldClockEl = document.getElementById('clock-time');
@@ -380,10 +432,13 @@ const grassMat = new THREE.MeshStandardMaterial({ color:0x6a9a4a, roughness:1, m
 const grassWind = { value:0 };
 const grassCarPos = { value:new THREE.Vector3(0,0,0) };
 let windTime = 0;
+const grassFlattenTex = { value: flattenTex };
 grassMat.onBeforeCompile = (sh)=>{
     sh.uniforms.uWind = grassWind;
     sh.uniforms.uCarPos = grassCarPos;
-    sh.vertexShader = 'uniform float uWind;\nuniform vec3 uCarPos;\n' + sh.vertexShader.replace(
+    sh.uniforms.uFlattenTex = grassFlattenTex;
+    sh.uniforms.uTrackCenter = uTrackCenter;
+    sh.vertexShader = 'uniform float uWind;\nuniform vec3 uCarPos;\nuniform sampler2D uFlattenTex;\nuniform vec2 uTrackCenter;\n' + sh.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
          float bH = position.y;
@@ -394,7 +449,10 @@ grassMat.onBeforeCompile = (sh)=>{
          transformed.z += cos(uWind*1.3 + ph*0.8) * 0.28 * bH * gust;
          vec3 toCar = wp4.xyz - uCarPos;
          float carDist = length(toCar.xz);
-         float flatten = 1.0 - smoothstep(0.5, 2.8, carDist);
+         float flattenCar = 1.0 - smoothstep(0.5, 2.8, carDist);
+         vec2 trackUV = vec2((wp4.x - uTrackCenter.x) / 512.0 + 0.5, (wp4.z - uTrackCenter.y) / 512.0 + 0.5);
+         float flattenTexVal = texture2D(uFlattenTex, trackUV).r;
+         float flatten = max(flattenCar, flattenTexVal);
          vec2 carDir = carDist < 0.001 ? vec2(0.0) : toCar.xz / carDist;
          transformed.y -= bH * flatten * 0.7;
          transformed.x += carDir.x * flatten * bH * 0.2;
@@ -637,6 +695,11 @@ function regenerateWorld(epoch) {
     if (roadMesh) { scene.remove(roadMesh); roadMesh.geometry.dispose(); roadMesh = null; }
     if (lineMesh) { scene.remove(lineMesh); lineMesh.geometry.dispose(); lineMesh = null; }
     roadBuiltIdx = -99999;
+    // Reset tracks
+    trackCX = 0; trackCZ = 0;
+    resetTrackMaps();
+    if(trackOverlay){ scene.remove(trackOverlay); trackOverlay.geometry.dispose(); trackOverlay = null; }
+    initTrackOverlay();
     // Rebuild
     roadInit();
     resetCar();
@@ -889,6 +952,7 @@ function update(dt){
     let vf = vx*F.x + vz*F.z;         // speed along car forward
     let vl = vx*R.x + vz*R.z;         // lateral (sideways) speed
     const vabs=Math.abs(vf);
+    if(vabs>0.5) totalDriveM+=vabs*dt;
 
     // road check
     const rinfo=roadInfo(pos.x,pos.z);
@@ -1016,6 +1080,18 @@ function update(dt){
         if (w.rim) w.rim.rotation.x = wheelSpin;
     }
 
+    // ── persistent tracks + flatten ──
+    if(_canDrive){
+        const ws=TRACK_HALF*0.6;
+        if(Math.abs(pos.x-trackCX)>ws||Math.abs(pos.z-trackCZ)>ws) recenterTrackMaps(pos.x,pos.z);
+        const ca=heading, sa=Math.sin(ca), co=Math.cos(ca);
+        for(const [ww,wz] of [[WHEELBASE/2,TRACK/2],[WHEELBASE/2,-TRACK/2],[-WHEELBASE/2,TRACK/2],[-WHEELBASE/2,-TRACK/2]]){
+            const wx=pos.x+ww*co-wz*sa, wz2=pos.z+ww*sa+wz*co;
+            drawWheelMark(wx,wz2,1);
+        }
+        flattenTex.needsUpdate=true; trackTex.needsUpdate=true;
+    }
+
     // ── dust when sliding / offroad ──
     const sliding = Math.abs(vl)>2.5 || hb;
     if(vabs>6 && (sliding || !onRoad)){
@@ -1059,6 +1135,7 @@ function update(dt){
     windTime += dt;
     grassWind.value = windTime;
     grassCarPos.value.copy(car.position);
+    if(trackOverlay){ trackOverlay.position.set(trackCX, 0.08, trackCZ); }
     updateClouds(dt);
     updateBirds(dt);
 
@@ -1089,6 +1166,8 @@ function update(dt){
                 String(m).padStart(2, '0') + ':' +
                 String(s).padStart(2, '0');
         }
+        localStorage.setItem('lastPlayed', String(Date.now()));
+        document.getElementById('total-dist').textContent = (totalDriveM / 1000).toFixed(1);
     }
 
     // HUD
@@ -1306,6 +1385,7 @@ if (window.__pName) {
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
 } else namePrompt.classList.add('hidden');
 
+
 // ── Chat ──
 const chatEl = document.getElementById('chat');
 const chatMsgsEl = document.getElementById('chat-msgs');
@@ -1387,10 +1467,19 @@ function updatePeers(dt){
 // ── UI fade ──
 setTimeout(()=>{ document.getElementById('hint').classList.add('gone'); document.getElementById('title').classList.add('gone'); }, 6500);
 
+// idle detection: uusi kartta jos kukaan ei ole ajanut >IDLE_MS aikaan
+const lastPlayed = localStorage.getItem('lastPlayed');
+if (lastPlayed && Date.now() - parseInt(lastPlayed) > IDLE_MS && peers.size === 0) {
+    worldEpoch++;
+    regenerateWorld(worldEpoch);
+}
+localStorage.setItem('lastPlayed', String(Date.now()));
+
 // ════════════════════════════════════════════════════════════
 //  BOOT
 // ════════════════════════════════════════════════════════════
 resetCar();
+trackOverlay || initTrackOverlay();
 roadExtend(pos.x,pos.z);
 updateChunks(pos.x,pos.z);   // queue nearby chunks
 // Build only the center chunk synchronously so terrain is visible immediately
