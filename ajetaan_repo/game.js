@@ -91,7 +91,7 @@ function resetTrackMaps(){
     flattenTex.needsUpdate=true; trackTex.needsUpdate=true;
 }
 let worldEpoch = worldSeed;
-let worldClockTimer = 0;
+let worldClockTimer = 0, idleTimer = 0;
 const worldClockEl = document.getElementById('clock-time');
 // Initialize clock display immediately
 (function initClock() {
@@ -717,6 +717,7 @@ function updateChunks(px,pz){
 }
 
 function regenerateWorld(epoch) {
+    idleTimer = 0;
     worldSeed = epoch;
     document.getElementById('loading').classList.remove('hidden');
     // Clear all existing chunks
@@ -1192,6 +1193,17 @@ function update(dt){
     worldClockTimer += dt;
     if (worldClockTimer > 1) {
         worldClockTimer = 0;
+        // idle regeneration: if no peers and car idle for 20s, regen immediately
+        if (peers.size === 0 && vabs < 0.5 && Math.abs(throttle) < 0.1 && Math.abs(brake) < 0.1 && Math.abs(steer) < 0.1) {
+            idleTimer += 1;
+            if (idleTimer >= 20) {
+                idleTimer = 0;
+                worldEpoch = Math.floor(Date.now() / WORLD_MS);
+                regenerateWorld(worldEpoch);
+            }
+        } else {
+            idleTimer = 0;
+        }
         const epoch = Math.floor(Date.now() / WORLD_MS);
         if (epoch !== worldEpoch) {
             worldEpoch = epoch;
