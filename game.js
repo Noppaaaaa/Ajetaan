@@ -651,8 +651,16 @@ let _chunkTick=0;
 function updateChunks(px,pz){
     const cx=Math.round(px/CHUNK), cz=Math.round(pz/CHUNK);
     camChunkX=px/CHUNK; camChunkZ=pz/CHUNK;
+    const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    fwd.y=0; fwd.normalize();
     const need=new Set();
-    for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++) need.add((cx+dx)+','+(cz+dz));
+    for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
+        const ck=(cx+dx)+','+(cz+dz);
+        const wx=(cx+dx+0.5)*CHUNK-px, wz=(cz+dz+0.5)*CHUNK-pz;
+        const d2=wx*wx+wz*wz;
+        if(d2<9*CHUNK*CHUNK){ need.add(ck); continue; }
+        if((wx*fwd.x+wz*fwd.z)/Math.sqrt(d2)>-0.15) need.add(ck);
+    }
     for(const [k,rec] of chunks){
         if(!need.has(k)){
             for(const o of rec.objs){ scene.remove(o); o.geometry?.dispose?.(); }
