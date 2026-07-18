@@ -20,7 +20,7 @@ const ROAD_STEP    = 12;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
 const CARVE_R      = 30;       // terrain smoothing radius around road
 const RCELL        = 24;       // road spatial-hash cell size
-const LOD_R        = 35;       // chunks within this radius get full quality
+const LOD_R        = 10;       // chunks within this radius get full quality
 
 // Car / physics
 const MAX_SPEED    = 84;       // m/s (~302 km/h)
@@ -229,6 +229,7 @@ roadInit();   // build the initial road so physics init can read roadWP[0]
 // ════════════════════════════════════════════════════════════
 const scene = new THREE.Scene();
 const HORIZON = 0xbcd3e0;
+scene.background = new THREE.Color(HORIZON);
 scene.fog = new THREE.FogExp2(HORIZON, 0.0022);
 
 const camera = new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.3, 4000);
@@ -493,7 +494,7 @@ function buildChunk(cx,cz,lod){
     const rec={ objs:[], lod };
 
     // ── terrain mesh ──
-    const seg=lod?3:SEG;
+    const seg=lod?Math.ceil(SEG/2):SEG;
     const geo=new THREE.PlaneGeometry(CHUNK,CHUNK,seg,seg); geo.rotateX(-Math.PI/2);
     const pos=geo.attributes.position.array;
     for(let i=0;i<pos.length;i+=3) pos[i+1]=getHeight(ox+pos[i], oz+pos[i+2]);
@@ -511,140 +512,136 @@ function buildChunk(cx,cz,lod){
     mesh.position.set(ox,0,oz); mesh.receiveShadow=true;
     scene.add(mesh); rec.objs.push(mesh);
 
-    if(!lod){
-        // ── scatter vegetation / rocks ──
-        const rng=mulberry32((cx*73856093)^(cz*19349663));
-        const pineM=[], leafM=[], rockM=[], bushM=[], collide=[];
-        const dummy=new THREE.Object3D();
-        const grassPts=[], grassSmallPts=[];
+    // ── scatter vegetation / rocks (half density for LOD) ──
+    const density = lod ? 0.5 : 1;
+    const rng=mulberry32((cx*73856093)^(cz*19349663));
+    const pineM=[], leafM=[], rockM=[], bushM=[], collide=[];
+    const dummy=new THREE.Object3D();
+    const grassPts=[], grassSmallPts=[];
 
-        const CAND=1;
-        for(let i=0;i<CAND;i++){
-            const gx=ox+(rng()-0.5)*CHUNK*0.96;
-            const gz=oz+(rng()-0.5)*CHUNK*0.96;
-            const nat=naturalHeight(gx,gz);
-            if(nat<SEA+1.2 || nat>150) continue;
-            const r=roadInfo(gx,gz); if(r.d<CARVE_R+3) continue;   // keep road clear
-            const e=2, hL=naturalHeight(gx-e,gz), hR=naturalHeight(gx+e,gz), hD=naturalHeight(gx,gz-e), hU=naturalHeight(gx,gz+e);
-            const slope=(Math.abs(hR-hL)+Math.abs(hU-hD))/(2*e);
-            if(slope>0.9) continue;
-            const forest=forestAt(gx,gz);
-            const moist=moistureAt(gx,gz);
-            const y=nat;
-
-            if(slope<0.4 && rng()<0.14){
-                dummy.position.set(gx,y-0.15,gz);
-                const s=0.4+rng()*1.6; dummy.scale.set(s,s*(0.7+rng()*0.5),s);
-                dummy.rotation.set(rng()*0.4,rng()*6.28,rng()*0.4);
-                dummy.updateMatrix(); rockM.push(dummy.matrix.clone());
-                if(s>0.9) collide.push({x:gx,z:gz,r:s*0.7});
-                continue;
-            }
-            if(forest<0.42 && rng()>forest+0.15) continue;
-            const isPine = moist<0.5 || y>70 ? rng()<0.75 : rng()<0.3;
-            const s=0.7+rng()*0.8;
-            dummy.position.set(gx,y,gz);
-            dummy.scale.set(s,s*(0.85+rng()*0.35),s);
-            dummy.rotation.set(0,rng()*6.28,0);
-            dummy.updateMatrix();
-            (isPine?pineM:leafM).push(dummy.matrix.clone());
-            collide.push({x:gx,z:gz,r:0.5*s});
+    const CAND=1;
+    for(let i=0;i<CAND;i++){
+        const gx=ox+(rng()-0.5)*CHUNK*0.96;
+        const gz=oz+(rng()-0.5)*CHUNK*0.96;
+        const nat=naturalHeight(gx,gz);
+        if(nat<SEA+1.2 || nat>150) continue;
+        const r=roadInfo(gx,gz); if(r.d<CARVE_R+3) continue;
+        const e=2, hL=naturalHeight(gx-e,gz), hR=naturalHeight(gx+e,gz), hD=naturalHeight(gx,gz-e), hU=naturalHeight(gx,gz+e);
+        const slope=(Math.abs(hR-hL)+Math.abs(hU-hD))/(2*e);
+        if(slope>0.9) continue;
+        const forest=forestAt(gx,gz);
+        const moist=moistureAt(gx,gz);
+        const y=nat;
+        if(slope<0.4 && rng()<0.14){
+            dummy.position.set(gx,y-0.15,gz);
+            const s=0.4+rng()*1.6; dummy.scale.set(s,s*(0.7+rng()*0.5),s);
+            dummy.rotation.set(rng()*0.4,rng()*6.28,rng()*0.4);
+            dummy.updateMatrix(); rockM.push(dummy.matrix.clone());
+            if(s>0.9) collide.push({x:gx,z:gz,r:s*0.7});
+            continue;
         }
-        // ── bushes in open areas ──
-        {
-            const brng=mulberry32((cx*739)^(cz*4963)^3);
-            for(let i=0;i<5;i++){
-                const gx=ox+(brng()-0.5)*CHUNK*0.94, gz=oz+(brng()-0.5)*CHUNK*0.94;
-                const nat=naturalHeight(gx,gz);
-                if(nat<SEA+1.4 || nat>100) continue;
-                const r=roadInfo(gx,gz); if(r.d<CARVE_R+4) continue;
-                const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
-                if(slope>0.4) continue;
-                const forest=forestAt(gx,gz);
-                if(forest>0.6 && brng()<forest) continue;
-                dummy.position.set(gx,nat-0.05,gz);
-                const s=0.6+brng()*1.4; dummy.scale.set(s,s*(0.7+brng()*0.3),s);
-                dummy.rotation.set(brng()*0.3,brng()*6.28,brng()*0.3);
-                dummy.updateMatrix(); bushM.push(dummy.matrix.clone());
-            }
-        }
-        // grass everywhere on green terrain
-        {
-            const grng=mulberry32((cx*911)^(cz*4703)^7);
-            for(let i=0;i<350;i++){
-                const gx=ox+(grng()-0.5)*CHUNK*0.94, gz=oz+(grng()-0.5)*CHUNK*0.94;
-                const nat=naturalHeight(gx,gz);
-                if(nat<SEA+1.4 || nat>78) continue;
-                const r=roadInfo(gx,gz);
-                if(r.d<CARVE_R) continue;
-                if(r.d<CARVE_R+8 && grng()>(r.d-CARVE_R)/8) continue;
-                const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
-                if(slope>0.5) continue;
-                if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
-                grassPts.push(gx,nat,gz);
-            }
-        }
-        // small grass
-        {
-            const grng=mulberry32((cx*911)^(cz*4703)^13);
-            for(let i=0;i<350;i++){
-                const gx=ox+(grng()-0.5)*CHUNK*0.94, gz=oz+(grng()-0.5)*CHUNK*0.94;
-                const nat=naturalHeight(gx,gz);
-                if(nat<SEA+1.4 || nat>78) continue;
-                const r=roadInfo(gx,gz);
-                if(r.d<CARVE_R) continue;
-                if(r.d<CARVE_R+8 && grng()>(r.d-CARVE_R)/8) continue;
-                const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
-                if(slope>0.5) continue;
-                if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
-                grassSmallPts.push(gx,nat,gz);
-            }
-        }
-
-        function instanced(geoP,mat,mats,cast){
-            if(!mats.length) return;
-            const im=new THREE.InstancedMesh(geoP,mat,mats.length);
-            for(let i=0;i<mats.length;i++) im.setMatrixAt(i,mats[i]);
-            im.instanceMatrix.needsUpdate=true; im.castShadow=cast; im.receiveShadow=false;
-            im.frustumCulled=true; scene.add(im); rec.objs.push(im);
-        }
-        instanced(trunkGeo, trunkMat, pineM.concat(leafM), true);
-        instanced(pineCanGeo, pineMat, pineM, true);
-        instanced(leafCanGeo, leafMat, leafM, true);
-        instanced(rockGeo, rockMat, rockM, true);
-        instanced(bushGeo, bushMat, bushM, true);
-
-        if(grassPts.length){
-            const n=grassPts.length/3;
-            const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
-            const d=new THREE.Object3D();
-            for(let i=0;i<n;i++){
-                d.position.set(grassPts[i*3],grassPts[i*3+1],grassPts[i*3+2]);
-                const s=0.7+Math.random()*1.3; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
-                d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
-                im.setMatrixAt(i,d.matrix);
-            }
-            im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
-            scene.add(im); rec.objs.push(im);
-        }
-        if(grassSmallPts.length){
-            const n=grassSmallPts.length/3;
-            const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
-            const d=new THREE.Object3D();
-            for(let i=0;i<n;i++){
-                d.position.set(grassSmallPts[i*3],grassSmallPts[i*3+1],grassSmallPts[i*3+2]);
-                const s=0.35+Math.random()*0.65; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
-                d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
-                im.setMatrixAt(i,d.matrix);
-            }
-            im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
-            scene.add(im); rec.objs.push(im);
-        }
-
-        collideByChunk.set(cx+','+cz, collide);
-    } else {
-        collideByChunk.set(cx+','+cz, []);
+        if(forest<0.42 && rng()>forest+0.15) continue;
+        const isPine = moist<0.5 || y>70 ? rng()<0.75 : rng()<0.3;
+        const s=0.7+rng()*0.8;
+        dummy.position.set(gx,y,gz);
+        dummy.scale.set(s,s*(0.85+rng()*0.35),s);
+        dummy.rotation.set(0,rng()*6.28,0);
+        dummy.updateMatrix();
+        (isPine?pineM:leafM).push(dummy.matrix.clone());
+        collide.push({x:gx,z:gz,r:0.5*s});
     }
+    // ── bushes ──
+    {
+        const brng=mulberry32((cx*739)^(cz*4963)^3);
+        for(let i=0;i<Math.ceil(5*density);i++){
+            const gx=ox+(brng()-0.5)*CHUNK*0.94, gz=oz+(brng()-0.5)*CHUNK*0.94;
+            const nat=naturalHeight(gx,gz);
+            if(nat<SEA+1.4 || nat>100) continue;
+            const r=roadInfo(gx,gz); if(r.d<CARVE_R+4) continue;
+            const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
+            if(slope>0.4) continue;
+            const forest=forestAt(gx,gz);
+            if(forest>0.6 && brng()<forest) continue;
+            dummy.position.set(gx,nat-0.05,gz);
+            const s=0.6+brng()*1.4; dummy.scale.set(s,s*(0.7+brng()*0.3),s);
+            dummy.rotation.set(brng()*0.3,brng()*6.28,brng()*0.3);
+            dummy.updateMatrix(); bushM.push(dummy.matrix.clone());
+        }
+    }
+    // ── grass ──
+    {
+        const grng=mulberry32((cx*911)^(cz*4703)^7);
+        for(let i=0;i<Math.floor(350*density);i++){
+            const gx=ox+(grng()-0.5)*CHUNK*0.94, gz=oz+(grng()-0.5)*CHUNK*0.94;
+            const nat=naturalHeight(gx,gz);
+            if(nat<SEA+1.4 || nat>78) continue;
+            const r=roadInfo(gx,gz);
+            if(r.d<CARVE_R) continue;
+            if(r.d<CARVE_R+8 && grng()>(r.d-CARVE_R)/8) continue;
+            const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
+            if(slope>0.5) continue;
+            if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
+            grassPts.push(gx,nat,gz);
+        }
+    }
+    // ── small grass ──
+    {
+        const grng=mulberry32((cx*911)^(cz*4703)^13);
+        for(let i=0;i<Math.floor(350*density);i++){
+            const gx=ox+(grng()-0.5)*CHUNK*0.94, gz=oz+(grng()-0.5)*CHUNK*0.94;
+            const nat=naturalHeight(gx,gz);
+            if(nat<SEA+1.4 || nat>78) continue;
+            const r=roadInfo(gx,gz);
+            if(r.d<CARVE_R) continue;
+            if(r.d<CARVE_R+8 && grng()>(r.d-CARVE_R)/8) continue;
+            const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
+            if(slope>0.5) continue;
+            if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
+            grassSmallPts.push(gx,nat,gz);
+        }
+    }
+
+    function instanced(geoP,mat,mats,cast){
+        if(!mats.length) return;
+        const im=new THREE.InstancedMesh(geoP,mat,mats.length);
+        for(let i=0;i<mats.length;i++) im.setMatrixAt(i,mats[i]);
+        im.instanceMatrix.needsUpdate=true; im.castShadow=cast; im.receiveShadow=false;
+        im.frustumCulled=true; scene.add(im); rec.objs.push(im);
+    }
+    instanced(trunkGeo, trunkMat, pineM.concat(leafM), true);
+    instanced(pineCanGeo, pineMat, pineM, true);
+    instanced(leafCanGeo, leafMat, leafM, true);
+    instanced(rockGeo, rockMat, rockM, true);
+    instanced(bushGeo, bushMat, bushM, true);
+
+    if(grassPts.length){
+        const n=grassPts.length/3;
+        const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
+        const d=new THREE.Object3D();
+        for(let i=0;i<n;i++){
+            d.position.set(grassPts[i*3],grassPts[i*3+1],grassPts[i*3+2]);
+            const s=0.7+Math.random()*1.3; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
+            d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
+            im.setMatrixAt(i,d.matrix);
+        }
+        im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
+        scene.add(im); rec.objs.push(im);
+    }
+    if(grassSmallPts.length){
+        const n=grassSmallPts.length/3;
+        const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
+        const d=new THREE.Object3D();
+        for(let i=0;i<n;i++){
+            d.position.set(grassSmallPts[i*3],grassSmallPts[i*3+1],grassSmallPts[i*3+2]);
+            const s=0.35+Math.random()*0.65; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
+            d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
+            im.setMatrixAt(i,d.matrix);
+        }
+        im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
+        scene.add(im); rec.objs.push(im);
+    }
+
+    collideByChunk.set(cx+','+cz, collide);
     return rec;
 }
 
