@@ -20,7 +20,7 @@ const ROAD_STEP    = 12;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
 const CARVE_R      = 30;       // terrain smoothing radius around road
 const RCELL        = 24;       // road spatial-hash cell size
-const LOD_R        = 10;       // chunks within this radius get full quality
+const LOD_R        = 15;       // chunks within this radius get full quality
 
 // Car / physics
 const MAX_SPEED    = 84;       // m/s (~302 km/h)
