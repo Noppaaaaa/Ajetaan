@@ -41,7 +41,7 @@ let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
 
 // ── Persistent flatten map & tire tracks ──
 const TRACK_HALF = 256;          // world meters from canvas center
-const TRACK_SIZE = 2048;         // canvas size (px)
+const TRACK_SIZE = 1024;         // canvas size (px)
 let trackCX = 0, trackCZ = 0;   // canvas center in world coords
 const flattenCanvas = document.createElement('canvas');
 flattenCanvas.width = flattenCanvas.height = TRACK_SIZE;
@@ -56,6 +56,7 @@ trCtx.fillStyle = '#fff'; trCtx.fillRect(0, 0, TRACK_SIZE, TRACK_SIZE);
 const trackTex = new THREE.CanvasTexture(trackCanvas);
 trackTex.wrapS = trackTex.wrapT = THREE.ClampToEdgeWrapping;
 const uTrackCenter = { value: new THREE.Vector2(0, 0) };
+let _trackUploadTick = 0;
 function scrollCanvas(ctx, bg, ocx, ocz, ncx, ncz){
     const dx=Math.round((ocx-ncx)/TRACK_HALF*TRACK_SIZE/2);
     const dz=Math.round((ocz-ncz)/TRACK_HALF*TRACK_SIZE/2);
@@ -249,7 +250,7 @@ const sunDir = new THREE.Vector3(0.55, 0.68, 0.48).normalize();
 const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x55613f, 0.75); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096,4096);
+sun.shadow.mapSize.set(2048,2048);
 sun.shadow.camera.near=1; sun.shadow.camera.far=260;
 sun.shadow.camera.left=-90; sun.shadow.camera.right=90;
 sun.shadow.camera.top=90; sun.shadow.camera.bottom=-90;
@@ -660,18 +661,18 @@ function buildChunk(cx,cz,lod){
 let camChunkX=0, camChunkZ=0;
 const _chunkBuildQueue=new Map();
 let _chunkTick=0;
+const _fwd = new THREE.Vector3();
 function updateChunks(px,pz){
     const cx=Math.round(px/CHUNK), cz=Math.round(pz/CHUNK);
     camChunkX=px/CHUNK; camChunkZ=pz/CHUNK;
-    const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-    fwd.y=0; fwd.normalize();
+    _fwd.set(0,0,-1).applyQuaternion(camera.quaternion); _fwd.y=0; _fwd.normalize();
     const need=new Set();
     for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
         const ck=(cx+dx)+','+(cz+dz);
         const wx=(cx+dx+0.5)*CHUNK-px, wz=(cz+dz+0.5)*CHUNK-pz;
         const d2=wx*wx+wz*wz;
         if(d2<9*CHUNK*CHUNK){ need.add(ck); continue; }
-        if((wx*fwd.x+wz*fwd.z)/Math.sqrt(d2)>-0.15) need.add(ck);
+        if((wx*_fwd.x+wz*_fwd.z)/Math.sqrt(d2)>-0.15) need.add(ck);
     }
     for(const [k,rec] of chunks){
         if(!need.has(k)){
@@ -1106,7 +1107,7 @@ function update(dt){
             const wx=pos.x+ww*co-wz*sa, wz2=pos.z+ww*sa+wz*co;
             drawWheelMark(wx,wz2,1);
         }
-        flattenTex.needsUpdate=true; trackTex.needsUpdate=true;
+        if(++_trackUploadTick%3===0){ flattenTex.needsUpdate=true; trackTex.needsUpdate=true; }
     }
 
     // ── dust when sliding / offroad ──
