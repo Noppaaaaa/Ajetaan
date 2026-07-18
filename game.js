@@ -674,19 +674,13 @@ const _chunkBuildQueue=new Map();
 const _upgrade21=[], _upgrade10=[];
 const _upgrading=new Set();
 let _chunkTick=0;
-const _fwd = new THREE.Vector3();
 function updateChunks(px,pz){
     const cx=Math.round(px/CHUNK), cz=Math.round(pz/CHUNK);
     camChunkX=px/CHUNK; camChunkZ=pz/CHUNK;
-    _fwd.set(0,0,-1).applyQuaternion(camera.quaternion); _fwd.y=0; _fwd.normalize();
     const need=new Set();
     for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
         const ck=(cx+dx)+','+(cz+dz);
-        if(chunks.has(ck)){ need.add(ck); continue; }
-        const wx=(cx+dx+0.5)*CHUNK-px, wz=(cz+dz+0.5)*CHUNK-pz;
-        const d2=wx*wx+wz*wz;
-        if(d2<9*CHUNK*CHUNK){ need.add(ck); continue; }
-        if((wx*_fwd.x+wz*_fwd.z)/Math.sqrt(d2)>-0.15) need.add(ck);
+        need.add(ck);
     }
     for(const [k,rec] of chunks){
         if(!need.has(k)){
