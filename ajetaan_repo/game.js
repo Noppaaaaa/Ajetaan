@@ -35,7 +35,7 @@ const RIDE_H       = 0.2;
 
 // ── World regeneration (2-hour epoch + idle detection) ──
 const WORLD_MS = 7200000;
-const IDLE_MS = 600000;  // 10 min ilman pelaajia → uusi kartta
+const IDLE_MS = 20000;   // 20 s ilman pelaajia → uusi kartta
 let worldSeed = Math.floor(Date.now() / WORLD_MS);
 let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
 
