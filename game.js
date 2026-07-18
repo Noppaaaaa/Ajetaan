@@ -421,20 +421,20 @@ function ensureWater(){
 const trunkGeo   = new THREE.CylinderGeometry(0.16,0.32,2.6,6).translate(0,1.3,0);
 const pineCanGeo = new THREE.ConeGeometry(1.5,4.4,7).translate(0,3.9,0);
 const leafCanGeo = new THREE.IcosahedronGeometry(1.9,1).scale(1,0.9,1).translate(0,3.6,0);
-const rockGeo    = new THREE.DodecahedronGeometry(1,0).scale(1,0.7,1.1);
+const rockGeo    = new THREE.DodecahedronGeometry(2,0).scale(1,0.7,1.1);
 const trunkMat = new THREE.MeshStandardMaterial({ color:0x4a3524, roughness:0.9, metalness:0 });
 const pineMat  = new THREE.MeshStandardMaterial({ color:0x2f5d33, roughness:0.85, metalness:0, flatShading:true });
 const leafMat  = new THREE.MeshStandardMaterial({ color:0x4a7c35, roughness:0.85, metalness:0, flatShading:true });
 const bigLeafGeo = new THREE.IcosahedronGeometry(2.85,1).scale(1,0.9,1).translate(0,5.4,0);  // 1.5x leaf tree
 const bigLeafMat = new THREE.MeshStandardMaterial({ color:0x3d6e2e, roughness:0.85, metalness:0, flatShading:true });
 const rockMat  = new THREE.MeshStandardMaterial({ color:0x6b6b66, roughness:0.95, metalness:0, flatShading:true });
-const bushGeo  = new THREE.IcosahedronGeometry(0.6,1).scale(1,0.55,0.85);
+const bushGeo  = new THREE.IcosahedronGeometry(1.2,1).scale(1,0.55,0.85);
 const bushMat  = new THREE.MeshStandardMaterial({ color:0x3a7a2a, roughness:0.9, metalness:0, flatShading:true });
 
 // LOD versions (fewer polygons, no trunk/grass/bushes)
 const lodPineGeo = new THREE.ConeGeometry(1.5,4.4,5).translate(0,3.9,0);
 const lodLeafGeo = new THREE.IcosahedronGeometry(1.9,0).scale(1,0.9,1).translate(0,3.6,0);
-const lodRockGeo = new THREE.BoxGeometry(0.7,0.5,0.8);
+const lodRockGeo = new THREE.BoxGeometry(1.4,1.0,1.6);
 
 // blade geometry for grass
 const bladeGeo = (()=>{
@@ -548,7 +548,7 @@ function buildChunk(cx,cz,lod){
             const s=0.4+rng()*1.6; dummy.scale.set(s,s*(0.7+rng()*0.5),s);
             dummy.rotation.set(rng()*0.4,rng()*6.28,rng()*0.4);
             dummy.updateMatrix(); rockM.push(dummy.matrix.clone());
-            if(s>0.9) collide.push({x:gx,z:gz,r:s*0.7});
+            collide.push({x:gx,z:gz,r:s*2.0});
             continue;
         }
         if(forest<0.42 && rng()>forest+0.15) continue;
@@ -558,15 +558,14 @@ function buildChunk(cx,cz,lod){
         dummy.scale.set(s,s*(0.85+rng()*0.35),s);
         dummy.rotation.set(0,rng()*6.28,0);
         dummy.updateMatrix();
-        if(isPine){ pineM.push(dummy.matrix.clone()); }
-        else if(rng()<1/6){ bigLeafM.push(dummy.matrix.clone()); }   // big round tree 1/5
-        else { leafM.push(dummy.matrix.clone()); }
-        collide.push({x:gx,z:gz,r:0.5*s});
+        if(isPine){ pineM.push(dummy.matrix.clone()); collide.push({x:gx,z:gz,r:1.5*s}); }
+        else if(rng()<1/6){ bigLeafM.push(dummy.matrix.clone()); collide.push({x:gx,z:gz,r:2.85*s}); }
+        else { leafM.push(dummy.matrix.clone()); collide.push({x:gx,z:gz,r:1.9*s}); }
     }
     // ── bushes ──
     {
         const brng=mulberry32((cx*739)^(cz*4963)^3);
-        for(let i=0;i<Math.ceil(5*density);i++){
+        for(let i=0;i<Math.ceil(2.5*density);i++){
             const gx=ox+(brng()-0.5)*CHUNK*0.94, gz=oz+(brng()-0.5)*CHUNK*0.94;
             const nat=naturalHeight(gx,gz);
             if(nat<SEA+1.4 || nat>100) continue;
@@ -579,6 +578,7 @@ function buildChunk(cx,cz,lod){
             const s=0.6+brng()*1.4; dummy.scale.set(s,s*(0.7+brng()*0.3),s);
             dummy.rotation.set(brng()*0.3,brng()*6.28,brng()*0.3);
             dummy.updateMatrix(); bushM.push(dummy.matrix.clone());
+            collide.push({x:gx,z:gz,r:s*1.2});
         }
     }
     // ── grass ──
