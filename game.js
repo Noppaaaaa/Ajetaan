@@ -1401,7 +1401,7 @@ function drawMini(){
 // ── Compass with cardinal directions + peers ──
 const compassCanvas = document.getElementById('compass');
 const compassCtx = compassCanvas.getContext('2d');
-const COMPASS_R = 36;
+const COMPASS_R = 48;
 function drawCompass() {
     const c = compassCtx;
     const w = compassCanvas.width, h = compassCanvas.height;
@@ -1416,14 +1416,14 @@ function drawCompass() {
     c.lineWidth = 1;
     for (let i = 0; i < 36; i++) {
         const a = (i / 36) * Math.PI * 2;
-        const inner = i % 9 === 0 ? COMPASS_R - 13 : COMPASS_R - 7;
+        const inner = i % 9 === 0 ? COMPASS_R - 17 : COMPASS_R - 9;
         c.beginPath();
         c.moveTo(Math.sin(a) * inner, -Math.cos(a) * inner);
-        c.lineTo(Math.sin(a) * (COMPASS_R - 3), -Math.cos(a) * (COMPASS_R - 3));
+        c.lineTo(Math.sin(a) * (COMPASS_R - 4), -Math.cos(a) * (COMPASS_R - 4));
         c.stroke();
     }
     // Cardinal labels
-    c.font = 'bold 11px "Segoe UI",sans-serif';
+    c.font = 'bold 15px "Segoe UI",sans-serif';
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     const dirs = ['N', 'E', 'S', 'W'];
