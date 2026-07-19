@@ -677,10 +677,11 @@ function buildChunk(cx,cz,lod){
             if(lod===0) collide.push({x:gx,z:gz,r:s*1.2});
         }
     }
+    const gd=Math.hypot(pos.x-ox,pos.z-oz)>CHUNK*6?density*0.5:density;
     // ── grass ──
     {
         const grng=mulberry32((cx*911)^(cz*4703)^7);
-        for(let i=0;i<Math.floor(350*density);i++){
+        for(let i=0;i<Math.floor(350*gd);i++){
             const gx=ox+(grng()-0.5)*CHUNK*0.94, gz=oz+(grng()-0.5)*CHUNK*0.94;
             const nat=naturalHeight(gx,gz);
             if(nat<SEA+1.4 || nat>78) continue;
@@ -696,7 +697,7 @@ function buildChunk(cx,cz,lod){
     // ── small grass ──
     {
         const grng=mulberry32((cx*911)^(cz*4703)^13);
-        for(let i=0;i<Math.floor(350*density);i++){
+        for(let i=0;i<Math.floor(350*gd);i++){
             const gx=ox+(grng()-0.5)*CHUNK*0.94, gz=oz+(grng()-0.5)*CHUNK*0.94;
             const nat=naturalHeight(gx,gz);
             if(nat<SEA+1.4 || nat>78) continue;
