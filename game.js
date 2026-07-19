@@ -673,7 +673,7 @@ function buildChunk(cx,cz,lod){
             const s=0.6+brng()*1.4; dummy.scale.set(s,s*(0.7+brng()*0.3),s);
             dummy.rotation.set(brng()*0.3,brng()*6.28,brng()*0.3);
             dummy.updateMatrix(); bushM.push(dummy.matrix.clone());
-            collide.push({x:gx,z:gz,r:s*1.2});
+            if(lod===0) collide.push({x:gx,z:gz,r:s*1.2});
         }
     }
     // ── grass ──
