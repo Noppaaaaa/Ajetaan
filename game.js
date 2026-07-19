@@ -252,11 +252,11 @@ const sunDir = new THREE.Vector3(0.55, 0.68, 0.48).normalize();
 const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x55613f, 0.75); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096,4096);
-sun.shadow.camera.near=0.5; sun.shadow.camera.far=320;
-sun.shadow.camera.left=-110; sun.shadow.camera.right=110;
-sun.shadow.camera.top=110; sun.shadow.camera.bottom=-110;
-sun.shadow.bias=-0.0004; sun.shadow.normalBias=0.025;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=1; sun.shadow.camera.far=260;
+sun.shadow.camera.left=-90; sun.shadow.camera.right=90;
+sun.shadow.camera.top=90; sun.shadow.camera.bottom=-90;
+sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.03;
 scene.add(sun); scene.add(sun.target);
 const fillLight = new THREE.DirectionalLight(0x88aaff, 0.35);
 fillLight.position.copy(sunDir).multiplyScalar(-1); scene.add(fillLight);
@@ -1369,7 +1369,7 @@ function updateCamera(dt, vabs, F){
 // ════════════════════════════════════════════════════════════
 const speedEl=document.getElementById('speed');
 const gearEl=document.getElementById('gear');
-let _fpsFrames=0, _fpsTime=performance.now(), _fpsVal=0, _debugShow=false;
+let _fpsFrames=0, _fpsTime=performance.now(), _fpsVal=0, _debugShow=false, _hudSkip=0;
 const _fpsEl=document.getElementById('fps-val'), _pingEl=document.getElementById('ping-val');
 const _debugEl=document.getElementById('debug');
 const miniCanvas=document.getElementById('minimap');
@@ -1377,8 +1377,7 @@ const miniCtx=miniCanvas.getContext('2d');
 function updateHUD(vf){
     speedEl.textContent=Math.round(Math.abs(vf)*3.6);
     gearEl.firstChild.textContent=gearNames[gear];
-    drawMini();
-    drawCompass();
+    if(++_hudSkip%6===0){ drawMini(); drawCompass(); }
 }
 const MINI_R=280;
 function drawMini(){
