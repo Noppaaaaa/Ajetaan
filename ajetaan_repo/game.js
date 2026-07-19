@@ -51,11 +51,11 @@ const DRAG_COEF     = 0.35;
 const FRONTAL_AREA  = 2.2;
 const MAX_BRAKE_TORQUE = 8000;
 
-// ── World regeneration (2-hour epoch + idle detection) ──
-const WORLD_MS = 600000;
-const IDLE_MS = 20000;   // 20 s ilman pelaajia → uusi kartta
+// ── World regeneration (1-hour epoch + first-player-gets-fresh-world) ──
+const WORLD_MS = 3600000;
 let worldSeed = Math.floor(Date.now() / WORLD_MS);
 let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
+let _seenPeer = false;    // onko peer-viestiä koskaan tullut tässä istunnossa
 
 // ── Persistent flatten map & tire tracks ──
 const TRACK_HALF = 256;          // world meters from canvas center
@@ -1637,6 +1637,7 @@ function buildGhost(hex){
 }
 net.setHandlers(
     d=>{  // peer position update
+        _seenPeer = true;
         let p=peers.get(d.id);
         if(!p){
             const group=buildGhost(d.c); scene.add(group);
@@ -1669,12 +1670,14 @@ function updatePeers(dt){
 // ── UI fade ──
 setTimeout(()=>{ document.getElementById('hint').classList.add('gone'); document.getElementById('title').classList.add('gone'); }, 6500);
 
-// idle detection: uusi kartta jos kukaan ei ole ajanut >IDLE_MS aikaan
-const lastPlayed = localStorage.getItem('lastPlayed');
-if (lastPlayed && Date.now() - parseInt(lastPlayed) > IDLE_MS && peers.size === 0) {
-    worldEpoch++;
-    regenerateWorld(worldEpoch);
-}
+// first/lone player → fresh world (wait a bit for peer messages to arrive)
+setTimeout(() => {
+    if (!_seenPeer && peers.size === 0) {
+        const epoch = Math.floor(Date.now() / WORLD_MS);
+        worldEpoch = epoch;
+        regenerateWorld(epoch);
+    }
+}, 2000);
 localStorage.setItem('lastPlayed', String(Date.now()));
 
 // ════════════════════════════════════════════════════════════
