@@ -1371,6 +1371,7 @@ const miniCtx=miniCanvas.getContext('2d');
 function updateHUD(vf){
     speedEl.textContent=Math.round(Math.abs(vf)*3.6);
     gearEl.firstChild.textContent=gearNames[gear];
+    document.getElementById('altitude').textContent=Math.round(bodyY);
     if(++_hudSkip%6===0){ drawMini(); drawCompass(); }
 }
 const MINI_R=280;

@@ -75,6 +75,12 @@ canvas{display:block}
     backdrop-filter:blur(4px);z-index:10;display:flex;flex-direction:column;align-items:center;gap:1px}
 #dist-label{font-size:8px;letter-spacing:2px;opacity:.6;font-weight:300}
 
+#alt-meter{position:fixed;top:16px;left:20px;margin-top:104px;pointer-events:none;color:#eaf2f8;
+    font-size:13px;font-weight:300;letter-spacing:1px;font-variant-numeric:tabular-nums;
+    background:rgba(0,0,0,.45);padding:5px 11px;border-radius:8px;
+    backdrop-filter:blur(4px);z-index:10;display:flex;flex-direction:column;align-items:center;gap:1px}
+#alt-label{font-size:8px;letter-spacing:2px;opacity:.6;font-weight:300}
+
 /* ── Compass ── */
 #compass{position:fixed;top:28px;left:50%;transform:translateX(-50%);pointer-events:none;z-index:10;
     width:120px;height:120px;border-radius:50%;background:rgba(10,14,20,.45);backdrop-filter:blur(6px);
