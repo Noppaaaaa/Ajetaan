@@ -18,7 +18,7 @@ let   _chunksPerFrame = 4;    // chunks built per frame (mutable via settings)
 let   _colFrame = 0;
 let   _canDrive = false;     // true after name prompt submitted
 const ROAD_STEP    = 12;       // spacing between road waypoints
-const ROAD_HALF    = 2.8;      // road half width (flat part)
+const ROAD_HALF    = 5.6;      // road half width (flat part)
 const CARVE_R      = 30;       // terrain smoothing radius around road
 const RCELL        = 24;       // road spatial-hash cell size
 const LOD_R        = 15;       // chunks within this radius get full quality
@@ -172,7 +172,8 @@ function roadInsertHash(i){
 }
 function roadPush(){
     // smooth meander from low-frequency noise on the index
-    const curve = (fbm(rGenI*0.028+5, 0.5, 4)-0.5) * 0.6;
+    const gate = fbm(rGenI*0.006+99, 0.5, 2) > 0.5 ? 1 : 0;
+    const curve = (fbm(rGenI*0.028+5, 0.5, 4)-0.5) * 0.6 * gate;
     rGenA += curve;
     rGenX += Math.sin(rGenA)*ROAD_STEP;
     rGenZ += Math.cos(rGenA)*ROAD_STEP;
