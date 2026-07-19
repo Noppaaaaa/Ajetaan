@@ -1372,7 +1372,7 @@ function updateHUD(vf){
     speedEl.textContent=Math.round(Math.abs(vf)*3.6);
     gearEl.firstChild.textContent=gearNames[gear];
     document.getElementById('altitude').textContent=Math.round(bodyY);
-    if(++_hudSkip%6===0){ drawMini(); drawCompass(); }
+    if(++_hudSkip%3===0){ drawMini(); drawCompass(); }
 }
 const MINI_R=280;
 function drawMini(){
