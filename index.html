@@ -74,7 +74,7 @@ if(_savedName) document.getElementById('name-input').value=_savedName;
 for(const [h] of _npColors){
     const b=document.createElement('button'); b.style.background=h;
     if(h==='#2b6cc4'){ b.classList.add('sel'); _npSel=b; }
-    b.addEventListener('click',()=>{ if(_npSel)_npSel.classList.remove('sel'); b.classList.add('sel'); _npSel=b; window.__pColor=h; });
+    b.addEventListener('click',()=>{ if(_npSel)_npSel.classList.remove('sel'); b.classList.add('sel'); _npSel=b; window.__pColor=h; if(window.__apc)window.__apc(h); else window.__pendingColor=h; });
     _npCC.appendChild(b);
 }
 window.__pColor='#2b6cc4';

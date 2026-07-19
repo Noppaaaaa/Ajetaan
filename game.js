@@ -925,6 +925,8 @@ const bodyMat = new THREE.MeshPhysicalMaterial({ color:0x2b6cc4, metalness:0.55,
         model.userData.isCarModel = true;
         model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
         car.add(model);
+        applyCarColor(carColorHex);
+        if(window.__pendingColor) applyCarColor(window.__pendingColor);
     } catch (e) {
         console.warn('BMW model load failed, using detailed car:', e.message);
         const trimMat = new THREE.MeshStandardMaterial({ color:0x14161a, metalness:0.4, roughness:0.5 });
@@ -1516,6 +1518,7 @@ function applyCarColor(hex) {
         }
     });
 }
+window.__apc = (hex) => { carColorHex = hex; applyCarColor(hex); };
 if (window.__pName) {
     playerName = window.__pName;
     carColorHex = window.__pColor || '#2b6cc4';
