@@ -37,7 +37,7 @@ canvas{display:block}
 #loading .sub{font-size:10px;letter-spacing:3px;opacity:.4}
 
 /* ── Title ── */
-#title{position:fixed;top:26px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;transition:opacity 2s ease;z-index:10}
+#title{position:fixed;top:26px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;transition:opacity 2s ease;z-index:20}
 #title.gone{opacity:0}
 #title h1{font-size:22px;font-weight:200;letter-spacing:12px;color:#eaf2f8;text-shadow:0 2px 20px rgba(0,0,0,.6)}
 #title span{display:block;margin-top:4px;font-size:9px;letter-spacing:5px;color:rgba(255,255,255,.35)}
