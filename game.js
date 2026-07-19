@@ -34,6 +34,22 @@ const WHEELBASE    = 2.7;
 const TRACK        = 1.7;
 const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
+const GRAVITY      = 9.81;
+const CAR_MASS     = 1500;
+const ENGINE_MAX_TORQUE = 280;
+const REDLINE_RPM  = 7000;
+const IDLE_RPM     = 900;
+const GEAR_RATIOS  = [0, 3.5, 2.1, 1.4, 1.0, 0.75];
+const FINAL_DRIVE  = 3.5;
+const DRIVETRAIN_EFF = 0.85;
+const MAX_STEER_ANGLE = 0.55;
+const TIRE_FRICTION_ROAD = 1.0;
+const TIRE_FRICTION_OFFROAD = 0.6;
+const ROLLING_RESIST = 0.015;
+const AIR_DENSITY   = 1.225;
+const DRAG_COEF     = 0.35;
+const FRONTAL_AREA  = 2.2;
+const MAX_BRAKE_TORQUE = 8000;
 
 // ── World regeneration (2-hour epoch + idle detection) ──
 const WORLD_MS = 600000;
@@ -499,11 +515,12 @@ function initAudio() {
 function updateAudio(rpm, throttle) {
     if (!audioCtx) return;
     const t = audioCtx.currentTime;
-    const freq = 40 + rpm * 130;
+    const r = rpm / REDLINE_RPM;
+    const freq = 40 + r * 130;
     engineMain.frequency.linearRampToValueAtTime(freq, t + 0.08);
     engineHarm.frequency.linearRampToValueAtTime(freq * 2.01, t + 0.08);
-    engineFilter.frequency.linearRampToValueAtTime(200 + rpm * 900, t + 0.08);
-    const vol = Math.max(0.005, throttle * 0.18 + rpm * 0.04);
+    engineFilter.frequency.linearRampToValueAtTime(200 + r * 900, t + 0.08);
+    const vol = Math.max(0.005, throttle * 0.18 + r * 0.04);
     engineGain.gain.linearRampToValueAtTime(vol, t + 0.08);
     const wv = waterTime > 0 ? Math.min(0.1, waterTime * 0.03) : 0;
     waterGain.gain.linearRampToValueAtTime(wv, t + 0.1);
@@ -1105,31 +1122,43 @@ function update(dt){
     const rinfo=roadInfo(pos.x,pos.z);
     const onRoad = rinfo.d < ROAD_HALF+1.5;
 
-    // ── engine / brakes ──
-    if(throttle>0){
-        const gTop=gearSpeeds[Math.max(1,gear)];
-        const torque=Math.max(0.4, Math.sin(clamp(vabs/gTop,0,1)*Math.PI*0.7)*1.1);
-        vf += torque*ACCEL*(1 - clamp(vf,0,MAX_SPEED)/MAX_SPEED*0.7)*throttle*dt;
-    } else if(brake>0){
-        if(vf>0.3) vf -= BRAKE*brake*dt;
-        else vf -= ACCEL*0.55*brake*dt;      // reverse
+    // ── engine torque ──
+    let driveForce = 0;
+    if(gear>0 && throttle>0){
+        const tr = 1-((rpm-4000)/3000)**2;
+        const eTorque = ENGINE_MAX_TORQUE * Math.max(0, tr);
+        const wTorque = eTorque * throttle * GEAR_RATIOS[gear] * FINAL_DRIVE * DRIVETRAIN_EFF;
+        driveForce = wTorque / WHEEL_R;
     }
-    // drag
-    vf -= (vf*vf*0.00055*Math.sign(vf) + vf*0.02)*dt*60*0.0166;
-    if(throttle===0 && brake===0 && vabs<0.15) vf=0;
-    vf=clamp(vf,-MAX_REVERSE,MAX_SPEED);
+    // ── brakes ──
+    const brakeForce = brake>0 ? MAX_BRAKE_TORQUE*brake/WHEEL_R * Math.sign(vf) : 0;
+    // ── reverse ──
+    let revForce = 0;
+    if(brake>0 && vf<0.3 && vf>-0.3 && gear===0) revForce = -3000/WHEEL_R * brake;
+    // ── drag ──
+    const dragForce = 0.5 * AIR_DENSITY * DRAG_COEF * FRONTAL_AREA * vf * Math.abs(vf);
+    // ── rolling resistance ──
+    const rollForce = ROLLING_RESIST * CAR_MASS * GRAVITY * Math.sign(vf);
+    const longForce = driveForce - brakeForce + revForce - dragForce - rollForce;
+    vf += longForce / CAR_MASS * dt;
+    vf = clamp(vf, -MAX_REVERSE, MAX_SPEED);
+    if(throttle===0 && brake===0 && Math.abs(vf)<0.15) vf=0;
 
-    // ── lateral grip (car aligns velocity to heading) ──
-    let grip = hb ? 1.2 : (onRoad ? 7.5 : 4.5);
-    // weight transfer: braking adds grip, throttle reduces
-    grip += (brake>0?1.2:0) - (throttle>0?0.8:0);
-    vl -= vl*clamp(grip*dt,0,1);
+    // ── lateral grip (friction circle) ──
+    const mu = onRoad ? TIRE_FRICTION_ROAD : TIRE_FRICTION_OFFROAD;
+    const maxLatForce = mu * CAR_MASS * GRAVITY;
+    const longUtil = Math.abs(longForce) / (maxLatForce + 1);
+    const latFactor = Math.max(0, 1 - longUtil*longUtil);
+    vl -= vl * clamp(maxLatForce * latFactor / (Math.abs(vl)*CAR_MASS + 1) * dt, 0, 1);
 
     // ── steering ──
-    const steerAuth = Math.min(1, vabs/5);
-    const hiSpeed = 1 - clamp(vabs/MAX_SPEED,0,1)*0.55;
-    const dir = vf>=0?1:-1;
-    heading += steer*TURN_RATE*steerAuth*hiSpeed*dt*dir;
+    const steerAngle = steer * MAX_STEER_ANGLE * (1 - clamp(Math.abs(vf)/25, 0, 0.7));
+    const dir = vf >= 0 ? 1 : -1;
+    if(Math.abs(vf) > 1){
+        heading += Math.tan(steerAngle) * vf / WHEELBASE * dt;
+    } else {
+        heading += steerAngle * 3 * dir * dt;
+    }
 
     // recompose velocity from (possibly rotated) basis
     const F2={x:Math.sin(heading), z:Math.cos(heading)};
@@ -1197,7 +1226,7 @@ function update(dt){
     const corner = -clamp(vl/12,-1,1)*0.5;
     // ── vertical physics (spring + gravity) ──
     const targetY = supportY + RIDE_H;
-    const springK = 60, dampK = 5.0, grav = 4.67;
+    const springK = 60, dampK = 5.0, grav = GRAVITY;
     // spring works both ways — pulls down when extended, pushes up when compressed
     vy += springK * (targetY - bodyY) * dt;
     vy -= vy * dampK * dt;
@@ -1264,8 +1293,19 @@ function update(dt){
     else if(gear>1 && vabs<gearSpeeds[gear-1]-3) tg=gear-1;
     if(vf<=0.2 && vabs<0.6) tg=0;
     gear=tg;
-    const gMin=gearSpeeds[Math.max(0,gear-1)]||0, gMax=gearSpeeds[Math.max(1,gear)];
-    rpm = gear===0?0.1:clamp((vabs-gMin)/(gMax-gMin),0,1)*0.9+(throttle?0.1:0);
+    if(gear===0){
+        rpm = IDLE_RPM + (REDLINE_RPM - IDLE_RPM) * Math.max(throttle, brake) * 0.3;
+    } else {
+        const wheelRps = vabs / (WHEEL_R * 2 * Math.PI);
+        const engineRpmFromSpeed = wheelRps * 60 * GEAR_RATIOS[gear] * FINAL_DRIVE;
+        if(throttle>0 && vabs<1){
+            rpm += (REDLINE_RPM*0.9 - rpm) * throttle * dt * 2;
+        } else {
+            rpm = engineRpmFromSpeed;
+            if(rpm < IDLE_RPM && throttle===0) rpm += (IDLE_RPM - rpm) * 0.1;
+        }
+    }
+    rpm = clamp(rpm, 0, REDLINE_RPM);
 
     // ── audio ──
     if (!audioCtx) initAudio();
@@ -1376,6 +1416,7 @@ function updateHUD(vf){
     speedEl.textContent=Math.round(Math.abs(vf)*3.6);
     gearEl.firstChild.textContent=gearNames[gear];
     document.getElementById('altitude').textContent=Math.round(bodyY);
+    document.getElementById('rpm-fill').style.width = (rpm / REDLINE_RPM * 100) + '%';
     if(++_hudSkip%3===0){ drawMini(); drawCompass(); }
 }
 const MINI_R=280;

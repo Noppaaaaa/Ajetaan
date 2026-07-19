@@ -51,6 +51,9 @@ canvas{display:block}
     text-shadow:0 2px 12px rgba(0,0,0,.8);z-index:10;font-variant-numeric:tabular-nums}
 #gear small{display:block;font-size:9px;letter-spacing:3px;opacity:.4;text-align:center}
 
+#rpm-bar{position:fixed;bottom:100px;right:40px;width:120px;height:4px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;pointer-events:none;z-index:10}
+#rpm-fill{height:100%;width:0;background:linear-gradient(90deg,#6fb6e8,#e8a86f,#e85353);border-radius:3px;transition:width .05s linear}
+
 /* ── Hint ── */
 #hint{position:fixed;bottom:112px;left:50%;transform:translateX(-50%);pointer-events:none;color:rgba(255,255,255,.4);
     font-size:11px;letter-spacing:1px;text-shadow:0 2px 8px rgba(0,0,0,.6);transition:opacity 2s ease;z-index:10;white-space:nowrap}
