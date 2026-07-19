@@ -163,6 +163,7 @@ function forestAt(x,z){ return fbm(x*0.0022-25, z*0.0022+50, 4); }          // 0
 const roadWP = [];              // {x,z,y,a}
 const roadHash = new Map();     // "cx,cz" -> [indices]
 let   rGenX=0, rGenZ=0, rGenA=0, rGenH=0, rGenI=0;
+let   _roadBias=0;               // directional persistence bias
 
 function roadInsertHash(i){
     const w=roadWP[i];
@@ -173,7 +174,9 @@ function roadInsertHash(i){
 function roadPush(){
     // smooth meander from low-frequency noise on the index
     const gate = fbm(rGenI*0.006+99, 0.5, 2) > 0.5 ? 1 : 0;
-    const curve = (fbm(rGenI*0.028+5, 0.5, 4)-0.5) * 0.6 * gate;
+    const raw = (fbm(rGenI*0.028+5, 0.5, 4)-0.5) * 0.6;
+    const curve = (raw + _roadBias * 0.1) * gate;
+    _roadBias = raw > 0.01 ? 0.3 : (raw < -0.01 ? -0.3 : _roadBias);
     rGenA += curve;
     rGenX += Math.sin(rGenA)*ROAD_STEP;
     rGenZ += Math.cos(rGenA)*ROAD_STEP;
@@ -823,7 +826,7 @@ function regenerateWorld(epoch) {
     // Clear road data
     roadWP.length = 0;
     roadHash.clear();
-    rGenX = 0; rGenZ = 0; rGenA = 0; rGenH = 0; rGenI = 0;
+    rGenX = 0; rGenZ = 0; rGenA = 0; rGenH = 0; rGenI = 0; _roadBias = 0;
     if (roadMesh) { scene.remove(roadMesh); roadMesh.geometry.dispose(); roadMesh = null; }
     if (lineMesh) { scene.remove(lineMesh); lineMesh.geometry.dispose(); lineMesh = null; }
     roadBuiltIdx = -99999;
