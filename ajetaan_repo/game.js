@@ -36,7 +36,7 @@ const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
 
 // ── World regeneration (2-hour epoch + idle detection) ──
-const WORLD_MS = 7200000;
+const WORLD_MS = 900000;
 const IDLE_MS = 20000;   // 20 s ilman pelaajia → uusi kartta
 let worldSeed = Math.floor(Date.now() / WORLD_MS);
 let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
@@ -92,7 +92,7 @@ function resetTrackMaps(){
     flattenTex.needsUpdate=true; trackTex.needsUpdate=true;
 }
 let worldEpoch = worldSeed;
-let worldClockTimer = 0, idleTimer = 0;
+let worldClockTimer = 0;
 const worldClockEl = document.getElementById('clock-time');
 // Initialize clock display immediately
 (function initClock() {
@@ -329,7 +329,7 @@ function updateClouds(dt){
 // ── birds ──
 const birdGroup = new THREE.Group();
 const birdWingMat = new THREE.MeshStandardMaterial({ color:0x2a2a2a, roughness:0.8, side:THREE.DoubleSide });
-const birdWingGeo = new THREE.PlaneGeometry(0.5, 0.12);
+const birdWingGeo = new THREE.BoxGeometry(0.5, 0.002, 0.12);
 const birds = [];
 function buildBird(){
     const g = new THREE.Group();
@@ -812,7 +812,6 @@ function updateChunks(px,pz){
 }
 
 function regenerateWorld(epoch) {
-    idleTimer = 0;
     worldSeed = epoch;
     document.getElementById('loading').classList.remove('hidden');
     // Clear all existing chunks
@@ -1303,17 +1302,6 @@ function update(dt){
     worldClockTimer += dt;
     if (worldClockTimer > 1) {
         worldClockTimer = 0;
-        // idle regeneration: if no peers and car idle for 20s, regen immediately
-        if (peers.size === 0 && vabs < 0.5 && Math.abs(throttle) < 0.1 && Math.abs(brake) < 0.1 && Math.abs(steer) < 0.1) {
-            idleTimer += 1;
-            if (idleTimer >= 20) {
-                idleTimer = 0;
-                worldEpoch = Math.floor(Date.now() / WORLD_MS);
-                regenerateWorld(worldEpoch);
-            }
-        } else {
-            idleTimer = 0;
-        }
         const epoch = Math.floor(Date.now() / WORLD_MS);
         if (epoch !== worldEpoch) {
             worldEpoch = epoch;
