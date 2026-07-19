@@ -1473,7 +1473,7 @@ function updateNameTags() {
 // ════════════════════════════════════════════════════════════
 document.getElementById('settings-btn').addEventListener('click',()=>document.getElementById('panel').classList.toggle('open'));
 const rd=document.getElementById('rd'), rdVal=document.getElementById('rd-val');
-rd.addEventListener('input',()=>{ rdVal.textContent=rd.value; const v=+rd.value; if(v!==VIEW_R){ VIEW_R=v; updateChunks(pos.x,pos.z); const _ck=Math.round(pos.x/CHUNK)+','+Math.round(pos.z/CHUNK); if(_chunkBuildQueue.has(_ck)){ const _job=_chunkBuildQueue.get(_ck); _chunkBuildQueue.delete(_ck); chunks.set(_ck, buildChunk(_job.x,_job.z,_job.lod)); } } });
+rd.addEventListener('input',()=>{ rdVal.textContent=rd.value; const v=+rd.value; if(v!==VIEW_R){ VIEW_R=v; _lastNeedCX=_lastNeedCZ=-9999; updateChunks(pos.x,pos.z); const _ck=Math.round(pos.x/CHUNK)+','+Math.round(pos.z/CHUNK); if(_chunkBuildQueue.has(_ck)){ const _job=_chunkBuildQueue.get(_ck); _chunkBuildQueue.delete(_ck); chunks.set(_ck, buildChunk(_job.x,_job.z,_job.lod)); } } });
 const cpf=document.getElementById('chunks-pf'), cpfVal=document.getElementById('cpf-val');
 cpfVal.textContent=cpf.value; _chunksPerFrame=+cpf.value;
 cpf.addEventListener('input',()=>{ cpfVal.textContent=cpf.value; _chunksPerFrame=+cpf.value; });
