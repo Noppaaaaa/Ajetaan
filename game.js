@@ -193,7 +193,7 @@ function roadPush(){
     const curve = raw + _roadBias * 0.2;
     _roadBias = raw > 0.01 ? 0.3 : (raw < -0.01 ? -0.3 : _roadBias);
     rGenA += curve;
-    rGenA = clamp(rGenA, -Math.PI/2, Math.PI/2);
+    rGenA = clamp(rGenA, -Math.PI/4, Math.PI/4);
     rGenX += Math.sin(rGenA)*ROAD_STEP;
     rGenZ += Math.cos(rGenA)*ROAD_STEP;
     const nat = naturalHeight(rGenX, rGenZ);
