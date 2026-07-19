@@ -346,7 +346,7 @@ function buildBird(){
 }
 for(let i=0;i<30;i++){
     const b = buildBird();
-    const a = Math.random()*6.28, rad = 120+Math.random()*300;
+    const a = Math.random()*6.28, rad = 40+Math.random()*80;
     b.position.set(Math.cos(a)*rad, 12+Math.random()*20, Math.sin(a)*rad);
     b.userData.speed = 3+Math.random()*4;
     b.userData.phase = Math.random()*6.28;
@@ -632,7 +632,7 @@ function buildChunk(cx,cz,lod){
         const gz=oz+(rng()-0.5)*CHUNK*0.96;
         const nat=naturalHeight(gx,gz);
         if(nat<SEA+1.2 || nat>150) continue;
-        const r=roadInfo(gx,gz); if(r.d<CARVE_R+3) continue;
+        const r=roadInfo(gx,gz); if(r.d<CARVE_R/2+2) continue;
         const e=2, hL=naturalHeight(gx-e,gz), hR=naturalHeight(gx+e,gz), hD=naturalHeight(gx,gz-e), hU=naturalHeight(gx,gz+e);
         const slope=(Math.abs(hR-hL)+Math.abs(hU-hD))/(2*e);
         if(slope>0.9) continue;
@@ -665,7 +665,7 @@ function buildChunk(cx,cz,lod){
             const gx=ox+(brng()-0.5)*CHUNK*0.94, gz=oz+(brng()-0.5)*CHUNK*0.94;
             const nat=naturalHeight(gx,gz);
             if(nat<SEA+1.4 || nat>100) continue;
-            const r=roadInfo(gx,gz); if(r.d<CARVE_R+4) continue;
+            const r=roadInfo(gx,gz); if(r.d<CARVE_R/2+2) continue;
             const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
             if(slope>0.4) continue;
             const forest=forestAt(gx,gz);
@@ -685,8 +685,8 @@ function buildChunk(cx,cz,lod){
             const nat=naturalHeight(gx,gz);
             if(nat<SEA+1.4 || nat>78) continue;
             const r=roadInfo(gx,gz);
-            if(r.d<CARVE_R) continue;
-            if(r.d<CARVE_R+8 && grng()>(r.d-CARVE_R)/8) continue;
+            if(r.d<CARVE_R/2) continue;
+            if(r.d<CARVE_R/2+4 && grng()>(r.d-CARVE_R/2)/4) continue;
             const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
             if(slope>0.5) continue;
             if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
@@ -701,8 +701,8 @@ function buildChunk(cx,cz,lod){
             const nat=naturalHeight(gx,gz);
             if(nat<SEA+1.4 || nat>78) continue;
             const r=roadInfo(gx,gz);
-            if(r.d<CARVE_R) continue;
-            if(r.d<CARVE_R+8 && grng()>(r.d-CARVE_R)/8) continue;
+            if(r.d<CARVE_R/2) continue;
+            if(r.d<CARVE_R/2+4 && grng()>(r.d-CARVE_R/2)/4) continue;
             const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
             if(slope>0.5) continue;
             if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
