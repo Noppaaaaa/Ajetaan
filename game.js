@@ -51,11 +51,11 @@ const DRAG_COEF     = 0.35;
 const FRONTAL_AREA  = 2.2;
 const MAX_BRAKE_TORQUE = 8000;
 
-// ── World regeneration (2-hour epoch + idle detection) ──
-const WORLD_MS = 600000;
-const IDLE_MS = 20000;   // 20 s ilman pelaajia → uusi kartta
+// ── World regeneration (1-hour epoch + first-player-gets-fresh-world) ──
+const WORLD_MS = 3600000;
 let worldSeed = Math.floor(Date.now() / WORLD_MS);
 let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
+let _seenPeer = false;    // onko peer-viestiä koskaan tullut tässä istunnossa
 
 // ── Persistent flatten map & tire tracks ──
 const TRACK_HALF = 256;          // world meters from canvas center
@@ -1125,8 +1125,8 @@ function update(dt){
     // ── engine torque ──
     let driveForce = 0;
     if(gear>0 && throttle>0){
-        const tr = 1-((rpm-4000)/3000)**2;
-        const eTorque = ENGINE_MAX_TORQUE * Math.max(0, tr);
+        const tr = Math.max(0, 1 - ((rpm - 3500) / 3500) ** 2);
+        const eTorque = ENGINE_MAX_TORQUE * tr;
         const wTorque = eTorque * throttle * GEAR_RATIOS[gear] * FINAL_DRIVE * DRIVETRAIN_EFF;
         driveForce = wTorque / WHEEL_R;
     }
@@ -1246,7 +1246,7 @@ function update(dt){
 
     pos.y=groundY;
     car.position.set(pos.x, bodyY, pos.z);
-    car.rotation.set(bodyPitch, -heading, bodyRoll);
+    car.rotation.set(bodyPitch, heading, bodyRoll);
 
     // ── submerged too long → put the car back on the road ──
     if(groundY < SEA-0.4){ waterTime += dt; if(waterTime>5){ resetCar(); waterTime=0; } }
@@ -1288,7 +1288,7 @@ function update(dt){
 
     // ── gears / rpm ──
     let tg=gear;
-    if(gear===0 && vf>0.4) tg=1;
+    if(gear===0 && (vf>0.4 || throttle>0)) tg=1;
     else if(vabs>gearSpeeds[gear]+3 && gear<5) tg=gear+1;
     else if(gear>1 && vabs<gearSpeeds[gear-1]-3) tg=gear-1;
     if(vf<=0.2 && vabs<0.6) tg=0;
@@ -1637,6 +1637,7 @@ function buildGhost(hex){
 }
 net.setHandlers(
     d=>{  // peer position update
+        _seenPeer = true;
         let p=peers.get(d.id);
         if(!p){
             const group=buildGhost(d.c); scene.add(group);
@@ -1669,12 +1670,14 @@ function updatePeers(dt){
 // ── UI fade ──
 setTimeout(()=>{ document.getElementById('hint').classList.add('gone'); document.getElementById('title').classList.add('gone'); }, 6500);
 
-// idle detection: uusi kartta jos kukaan ei ole ajanut >IDLE_MS aikaan
-const lastPlayed = localStorage.getItem('lastPlayed');
-if (lastPlayed && Date.now() - parseInt(lastPlayed) > IDLE_MS && peers.size === 0) {
-    worldEpoch++;
-    regenerateWorld(worldEpoch);
-}
+// first/lone player → fresh world (wait a bit for peer messages to arrive)
+setTimeout(() => {
+    if (!_seenPeer && peers.size === 0) {
+        const epoch = Math.floor(Date.now() / WORLD_MS);
+        worldEpoch = epoch;
+        regenerateWorld(epoch);
+    }
+}, 2000);
 localStorage.setItem('lastPlayed', String(Date.now()));
 
 // ════════════════════════════════════════════════════════════
