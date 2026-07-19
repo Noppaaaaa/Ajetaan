@@ -1377,7 +1377,7 @@ function update(dt){
 }
 
 function updateCamera(dt, vabs, F){
-    camHeading += (heading - camHeading) * Math.min(1, 2*dt);
+    camHeading += (heading - camHeading) * Math.min(1, 4*dt);
     const cf = {x:Math.sin(camHeading), z:Math.cos(camHeading)};
     let dist, height, look;
     if(camMode===0){ dist=8.5+vabs/MAX_SPEED*3.5; height=3.4+vabs/MAX_SPEED*0.8; look=9; }
@@ -1392,7 +1392,7 @@ function updateCamera(dt, vabs, F){
         const minY=getHeight(camPos.x,camPos.z)+1.0; if(camPos.y<minY)camPos.y=minY;
     }
     camera.position.copy(camPos);
-    camera.lookAt(pos.x+cf.x*look, bodyY+1.2, pos.z+cf.z*look);
+    camera.lookAt(pos.x+F.x*look, bodyY+1.2, pos.z+F.z*look);
     const fov = 62 + (vabs/MAX_SPEED)*2;
     camera.fov += (fov-camera.fov)*Math.min(1,4*dt); camera.updateProjectionMatrix();
     // ── motion blur ──
