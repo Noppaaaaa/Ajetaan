@@ -1046,7 +1046,7 @@ let heading = roadWP[1] ? Math.atan2(roadWP[1].x-roadWP[0].x, roadWP[1].z-roadWP
 const pos = new THREE.Vector3(roadWP[0].x, getHeight(roadWP[0].x,roadWP[0].z), roadWP[0].z);
 let vx=0, vz=0;                       // world-space velocity
 let bodyPitch=0, bodyRoll=0, bodyY=pos.y+RIDE_H, vy=0;
-let gear=0, rpm=0, steerVis=0, wheelSpin=0;
+let gear=0, rpm=IDLE_RPM, steerVis=0, wheelSpin=0;
 let waterTime=0;   // seconds the car has spent below the water line
 let carColorHex='#2b6cc4';
 let netTimer=0;
@@ -1122,6 +1122,8 @@ function update(dt){
     const rinfo=roadInfo(pos.x,pos.z);
     const onRoad = rinfo.d < ROAD_HALF+1.5;
 
+    // ── 1st gear when throttle pressed (before torque calc) ──
+    if(gear===0 && throttle>0) gear=1;
     // ── engine torque ──
     let driveForce = 0;
     if(gear>0 && throttle>0){
@@ -1246,7 +1248,7 @@ function update(dt){
 
     pos.y=groundY;
     car.position.set(pos.x, bodyY, pos.z);
-    car.rotation.set(bodyPitch, heading, bodyRoll);
+    car.rotation.set(bodyPitch, -heading, bodyRoll);
 
     // ── submerged too long → put the car back on the road ──
     if(groundY < SEA-0.4){ waterTime += dt; if(waterTime>5){ resetCar(); waterTime=0; } }
@@ -1673,9 +1675,8 @@ setTimeout(()=>{ document.getElementById('hint').classList.add('gone'); document
 // first/lone player → fresh world (wait a bit for peer messages to arrive)
 setTimeout(() => {
     if (!_seenPeer && peers.size === 0) {
-        const epoch = Math.floor(Date.now() / WORLD_MS);
-        worldEpoch = epoch;
-        regenerateWorld(epoch);
+        worldEpoch++;
+        regenerateWorld(worldEpoch);
     }
 }, 2000);
 localStorage.setItem('lastPlayed', String(Date.now()));
