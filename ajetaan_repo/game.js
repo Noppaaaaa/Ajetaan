@@ -1125,8 +1125,8 @@ function update(dt){
     // ── engine torque ──
     let driveForce = 0;
     if(gear>0 && throttle>0){
-        const tr = 1-((rpm-4000)/3000)**2;
-        const eTorque = ENGINE_MAX_TORQUE * Math.max(0, tr);
+        const tr = Math.max(0, 1 - ((rpm - 3500) / 3500) ** 2);
+        const eTorque = ENGINE_MAX_TORQUE * tr;
         const wTorque = eTorque * throttle * GEAR_RATIOS[gear] * FINAL_DRIVE * DRIVETRAIN_EFF;
         driveForce = wTorque / WHEEL_R;
     }
@@ -1246,7 +1246,7 @@ function update(dt){
 
     pos.y=groundY;
     car.position.set(pos.x, bodyY, pos.z);
-    car.rotation.set(bodyPitch, -heading, bodyRoll);
+    car.rotation.set(bodyPitch, heading, bodyRoll);
 
     // ── submerged too long → put the car back on the road ──
     if(groundY < SEA-0.4){ waterTime += dt; if(waterTime>5){ resetCar(); waterTime=0; } }
@@ -1288,7 +1288,7 @@ function update(dt){
 
     // ── gears / rpm ──
     let tg=gear;
-    if(gear===0 && vf>0.4) tg=1;
+    if(gear===0 && (vf>0.4 || throttle>0)) tg=1;
     else if(vabs>gearSpeeds[gear]+3 && gear<5) tg=gear+1;
     else if(gear>1 && vabs<gearSpeeds[gear-1]-3) tg=gear-1;
     if(vf<=0.2 && vabs<0.6) tg=0;
