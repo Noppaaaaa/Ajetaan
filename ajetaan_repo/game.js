@@ -436,6 +436,101 @@ const lodPineGeo = new THREE.ConeGeometry(1.5,4.4,5).translate(0,3.9,0);
 const lodLeafGeo = new THREE.IcosahedronGeometry(1.9,0).scale(1,0.9,1).translate(0,3.6,0);
 const lodRockGeo = new THREE.BoxGeometry(1.4,1.0,1.6);
 
+// ── Audio (Web Audio API, procedural) ──
+let audioCtx = null;
+let engineMain, engineHarm, engineGain, engineFilter;
+let waterNoiseSrc, waterGain, waterFilter, waterLFO;
+let _collisionCD = 0;
+
+function initAudio() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    engineMain = audioCtx.createOscillator();
+    engineMain.type = 'sawtooth';
+    engineHarm = audioCtx.createOscillator();
+    engineHarm.type = 'square';
+    engineFilter = audioCtx.createBiquadFilter();
+    engineFilter.type = 'lowpass';
+    engineFilter.frequency.value = 300;
+    engineGain = audioCtx.createGain();
+    engineGain.gain.value = 0;
+    engineMain.connect(engineFilter);
+    engineHarm.connect(engineFilter);
+    engineFilter.connect(engineGain);
+    engineGain.connect(audioCtx.destination);
+    engineMain.frequency.value = 50;
+    engineHarm.frequency.value = 100;
+    engineMain.start();
+    engineHarm.start();
+
+    const bufLen = Math.floor(audioCtx.sampleRate * 0.5);
+    const noiseBuf = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) nd[i] = Math.random() * 2 - 1;
+    waterNoiseSrc = audioCtx.createBufferSource();
+    waterNoiseSrc.buffer = noiseBuf;
+    waterNoiseSrc.loop = true;
+    waterFilter = audioCtx.createBiquadFilter();
+    waterFilter.type = 'lowpass';
+    waterFilter.frequency.value = 600;
+    waterGain = audioCtx.createGain();
+    waterGain.gain.value = 0;
+    waterLFO = audioCtx.createOscillator();
+    waterLFO.type = 'sine';
+    waterLFO.frequency.value = 4;
+    const lfoG = audioCtx.createGain();
+    lfoG.gain.value = 250;
+    waterLFO.connect(lfoG);
+    lfoG.connect(waterFilter.frequency);
+    waterNoiseSrc.connect(waterFilter);
+    waterFilter.connect(waterGain);
+    waterGain.connect(audioCtx.destination);
+    waterNoiseSrc.start();
+    waterLFO.start();
+}
+
+function updateAudio(rpm, throttle) {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const freq = 40 + rpm * 130;
+    engineMain.frequency.linearRampToValueAtTime(freq, t + 0.08);
+    engineHarm.frequency.linearRampToValueAtTime(freq * 2.01, t + 0.08);
+    engineFilter.frequency.linearRampToValueAtTime(200 + rpm * 900, t + 0.08);
+    const vol = Math.max(0.005, throttle * 0.18 + rpm * 0.04);
+    engineGain.gain.linearRampToValueAtTime(vol, t + 0.08);
+    const wv = waterTime > 0 ? Math.min(0.1, waterTime * 0.03) : 0;
+    waterGain.gain.linearRampToValueAtTime(wv, t + 0.1);
+}
+
+function playCollision() {
+    if (!audioCtx || audioCtx.currentTime < _collisionCD) return;
+    _collisionCD = audioCtx.currentTime + 0.12;
+    const len = Math.floor(audioCtx.sampleRate * 0.2);
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const bp = audioCtx.createBiquadFilter();
+    bp.type = 'lowpass';
+    bp.frequency.value = 700;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+    src.connect(bp); bp.connect(g); g.connect(audioCtx.destination);
+    src.start(); src.stop(audioCtx.currentTime + 0.2);
+}
+
+function resumeAudio() {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    document.removeEventListener('pointerdown', resumeAudio);
+    document.removeEventListener('keydown', resumeAudio);
+}
+document.addEventListener('pointerdown', resumeAudio);
+document.addEventListener('keydown', resumeAudio);
+
 // blade geometry for grass
 const bladeGeo = (()=>{
     const g=new THREE.BufferGeometry();
@@ -1034,7 +1129,7 @@ function update(dt){
         const d=Math.hypot(dx,dz); const min=2.6;
         if(d<min&&d>0.01){ const o=(min-d)/d; pos.x+=dx*o; pos.z+=dz*o;
             const nx=dx/d, nz=dz/d;
-            const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; } }
+            const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; playCollision(); } }
     }
 
     // ── tree / rock collision ──
@@ -1048,7 +1143,7 @@ function update(dt){
             const d=Math.hypot(odx,odz); const min=t.r+colR;
             if(d<min&&d>0.01){ const o=(min-d)/d; pos.x+=odx*o; pos.z+=odz*o;
                 const nx=odx/d, nz=odz/d;
-                const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; } }
+                const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; playCollision(); } }
         }
     }
 
@@ -1155,6 +1250,10 @@ function update(dt){
     gear=tg;
     const gMin=gearSpeeds[Math.max(0,gear-1)]||0, gMax=gearSpeeds[Math.max(1,gear)];
     rpm = gear===0?0.1:clamp((vabs-gMin)/(gMax-gMin),0,1)*0.9+(throttle?0.1:0);
+
+    // ── audio ──
+    if (!audioCtx) initAudio();
+    updateAudio(rpm, throttle);
 
     // ── camera ──
     updateCamera(dt, vabs, F2);
