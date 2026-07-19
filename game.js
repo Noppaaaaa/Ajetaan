@@ -1246,7 +1246,7 @@ function update(dt){
 
     pos.y=groundY;
     car.position.set(pos.x, bodyY, pos.z);
-    car.rotation.set(bodyPitch, heading, bodyRoll);
+    car.rotation.set(bodyPitch, -heading, bodyRoll);
 
     // ── submerged too long → put the car back on the road ──
     if(groundY < SEA-0.4){ waterTime += dt; if(waterTime>5){ resetCar(); waterTime=0; } }
@@ -1387,8 +1387,11 @@ function updateCamera(dt, vabs, F){
     }
     camera.position.copy(camPos);
     camera.lookAt(pos.x+F.x*look, bodyY+1.2, pos.z+F.z*look);
-    const fov = 62 + (vabs/MAX_SPEED)*4;
+    const fov = 62 + (vabs/MAX_SPEED)*2;
     camera.fov += (fov-camera.fov)*Math.min(1,4*dt); camera.updateProjectionMatrix();
+    // ── motion blur ──
+    const blur = clamp((vabs/MAX_SPEED)*1.2, 0, 1.2);
+    renderer.domElement.style.filter = blur ? `blur(${blur}px)` : '';
     // ── FPS / Ping display ──
     _fpsFrames++;
     const fpsNow=performance.now();
