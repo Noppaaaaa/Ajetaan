@@ -190,7 +190,7 @@ function roadExtend(px,pz){
     while(guard++ < 4000){
         const last=roadWP[roadWP.length-1];
         const d=Math.hypot(last.x-px, last.z-pz);
-        if(d > CHUNK*(VIEW_R+1)+ROAD_STEP) break;
+        if(d > CHUNK*(VIEW_R+15)+ROAD_STEP*3) break;
         roadPush();
     }
 }
@@ -863,16 +863,21 @@ function buildRibbon(a,b,halfW,yOff){
     const v=[], idx=[]; let vc=0;
     for(let i=a;i<b;i++){
         const p=roadWP[i], q=roadWP[i+1]; if(!p||!q) continue;
-        // skip if chunk under this segment isn't loaded
-        const cx=Math.round((p.x+q.x)/2/CHUNK), cz=Math.round((p.z+q.z)/2/CHUNK);
-        if(!chunks.has(cx+','+cz)) continue;
         const dx=q.x-p.x, dz=q.z-p.z; const l=Math.hypot(dx,dz)||1;
         const nx=-dz/l, nz=dx/l;
+        // averaged normals at endpoints to close gaps on curves
+        const pm=roadWP[i-1], qn=roadWP[i+2];
+        let nxp=nx, nzp=nz;
+        if(pm){ const dxp=p.x-pm.x, dzp=p.z-pm.z, lp=Math.hypot(dxp,dzp)||1;
+            nxp=nx-dzp/lp; nzp=nz+dxp/lp; const ln=Math.hypot(nxp,nzp)||1; nxp/=ln; nzp/=ln; }
+        let nxq=nx, nzq=nz;
+        if(qn){ const dxq=qn.x-q.x, dzq=qn.z-q.z, lq=Math.hypot(dxq,dzq)||1;
+            nxq=nx-dzq/lq; nzq=nz+dxq/lq; const ln=Math.hypot(nxq,nzq)||1; nxq/=ln; nzq/=ln; }
         const cur=vc;
-        v.push(p.x+nx*halfW, p.y+yOff, p.z+nz*halfW);
-        v.push(p.x-nx*halfW, p.y+yOff, p.z-nz*halfW);
-        v.push(q.x+nx*halfW, q.y+yOff, q.z+nz*halfW);
-        v.push(q.x-nx*halfW, q.y+yOff, q.z-nz*halfW);
+        v.push(p.x+nxp*halfW, p.y+yOff, p.z+nzp*halfW);
+        v.push(p.x-nxp*halfW, p.y+yOff, p.z-nzp*halfW);
+        v.push(q.x+nxq*halfW, q.y+yOff, q.z+nzq*halfW);
+        v.push(q.x-nxq*halfW, q.y+yOff, q.z-nzq*halfW);
         vc+=4;
         idx.push(cur, cur+2, cur+1, cur+1, cur+2, cur+3);
     }
@@ -1188,7 +1193,7 @@ function update(dt){
     const corner = -clamp(vl/12,-1,1)*0.5;
     // ── vertical physics (spring + gravity) ──
     const targetY = supportY + RIDE_H;
-    const springK = 22, dampK = 3.0, grav = 7.0;
+    const springK = 60, dampK = 5.0, grav = 4.67;
     // spring works both ways — pulls down when extended, pushes up when compressed
     vy += springK * (targetY - bodyY) * dt;
     vy -= vy * dampK * dt;
@@ -1198,7 +1203,7 @@ function update(dt){
     }
     vy -= grav * dt;
     bodyY += vy * dt;
-    // final safety clamp
+    // final safety clamp — never below any ground sample
     if (bodyY < supportY) {
         bodyY = supportY;
         vy = 0;
@@ -1277,7 +1282,7 @@ function update(dt){
     // world streaming
     roadExtend(pos.x,pos.z);
     updateChunks(pos.x,pos.z);
-    if(rinfo.i>=0 && Math.abs(rinfo.i-roadBuiltIdx)>60){ rebuildRoad(rinfo.i); roadBuiltIdx=rinfo.i; }
+    if(rinfo.i>=0 && Math.abs(rinfo.i-roadBuiltIdx)>30){ rebuildRoad(rinfo.i); roadBuiltIdx=rinfo.i; }
 
     // ── wind ──
     windTime += dt;
