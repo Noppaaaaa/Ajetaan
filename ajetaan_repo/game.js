@@ -139,7 +139,7 @@ function naturalHeight(x,z){
 
     // continents / oceans — biased upward so land dominates and water is scarcer
     const cont = (fbm(wx*0.00034, wz*0.00034, 5)-0.5);
-    let h = cont*115 + 44;                         // mostly land; water only in deeper dips
+    let h = cont*115 + 30;                         // mostly land; water only in deeper dips
 
     // mountain mask & ridges
     const mMask = smoothstep(0.52, 0.78, fbm(wx*0.0006+40, wz*0.0006+15, 4));
