@@ -833,23 +833,23 @@ function regenerateWorld(epoch) {
     resetTrackMaps();
     if(trackOverlay){ scene.remove(trackOverlay); trackOverlay.geometry.dispose(); trackOverlay = null; }
     initTrackOverlay();
-    // Rebuild
+    // Rebuild road & queue all chunks
     roadInit();
     resetCar();
     roadExtend(pos.x, pos.z);
     updateChunks(pos.x, pos.z);
-    // Build all queued chunks synchronously for full view
-    while(_chunkBuildQueue.size>0){
-        const k=_chunkBuildQueue.keys().next().value;
-        const job=_chunkBuildQueue.get(k);
-        _chunkBuildQueue.delete(k);
-        chunks.set(k, buildChunk(job.x,job.z,job.lod));
+    // Build only the player's chunk synchronously (so car has ground)
+    const _ck=Math.round(pos.x/CHUNK)+','+Math.round(pos.z/CHUNK);
+    if(_chunkBuildQueue.has(_ck)){
+        const _job=_chunkBuildQueue.get(_ck);
+        _chunkBuildQueue.delete(_ck);
+        chunks.set(_ck, buildChunk(_job.x,_job.z,_job.lod));
     }
     rebuildRoad(0);
     roadBuiltIdx = 0;
     waterTime = 0;
     camPos.set(pos.x, pos.y + 6, pos.z - 10);
-    document.getElementById('loading').classList.add('hidden');
+    // loading stays visible until processChunkQueue reaches 50 chunks
     chatAdd('Uusi maailma generoitu');
 }
 
