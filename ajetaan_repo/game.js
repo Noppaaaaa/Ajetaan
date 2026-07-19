@@ -14,7 +14,8 @@ const SEA          = 0;        // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
 let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
-let   _chunksPerFrame = 2;    // chunks built per frame (mutable via settings)
+let   _chunksPerFrame = 4;    // chunks built per frame (mutable via settings)
+let   _colFrame = 0;
 let   _canDrive = false;     // true after name prompt submitted
 const ROAD_STEP    = 12;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
@@ -251,11 +252,11 @@ const sunDir = new THREE.Vector3(0.55, 0.68, 0.48).normalize();
 const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x55613f, 0.75); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048,2048);
-sun.shadow.camera.near=1; sun.shadow.camera.far=260;
-sun.shadow.camera.left=-90; sun.shadow.camera.right=90;
-sun.shadow.camera.top=90; sun.shadow.camera.bottom=-90;
-sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.03;
+sun.shadow.mapSize.set(4096,4096);
+sun.shadow.camera.near=0.5; sun.shadow.camera.far=320;
+sun.shadow.camera.left=-110; sun.shadow.camera.right=110;
+sun.shadow.camera.top=110; sun.shadow.camera.bottom=-110;
+sun.shadow.bias=-0.0004; sun.shadow.normalBias=0.025;
 scene.add(sun); scene.add(sun.target);
 const fillLight = new THREE.DirectionalLight(0x88aaff, 0.35);
 fillLight.position.copy(sunDir).multiplyScalar(-1); scene.add(fillLight);
@@ -765,6 +766,8 @@ function buildChunk(cx,cz,lod){
 }
 
 let camChunkX=0, camChunkZ=0;
+let _lastNeedCX=-9999, _lastNeedCZ=-9999;
+const _cachedNeed=new Set();
 const _chunkBuildQueue=new Map();
 const _upgrade21=[], _upgrade10=[];
 const _upgrading=new Set();
@@ -772,11 +775,14 @@ let _chunkTick=0;
 function updateChunks(px,pz){
     const cx=Math.round(px/CHUNK), cz=Math.round(pz/CHUNK);
     camChunkX=px/CHUNK; camChunkZ=pz/CHUNK;
-    const need=new Set();
-    for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
-        const ck=(cx+dx)+','+(cz+dz);
-        need.add(ck);
+    if(cx!==_lastNeedCX||cz!==_lastNeedCZ){
+        _lastNeedCX=cx; _lastNeedCZ=cz;
+        _cachedNeed.clear();
+        for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
+            _cachedNeed.add((cx+dx)+','+(cz+dz));
+        }
     }
+    const need=_cachedNeed;
     for(const [k,rec] of chunks){
         if(!need.has(k)){
             for(const o of rec.objs){ scene.remove(o); o.geometry?.dispose?.(); }
@@ -1132,10 +1138,11 @@ function update(dt){
             const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; playCollision(); } }
     }
 
-    // ── tree / rock collision ──
+    // ── tree / rock collision (every 2nd frame) ──
     const colR=3.5;
     const ckx=Math.round(pos.x/CHUNK), ckz=Math.round(pos.z/CHUNK);
-    for(let dx=-4;dx<=4;dx++) for(let dz=-4;dz<=4;dz++){
+    _colFrame++;
+    if(_colFrame&1) for(let dx=-4;dx<=4;dx++) for(let dz=-4;dz<=4;dz++){
         const col=collideByChunk.get((ckx+dx)+','+(ckz+dz));
         if(!col) continue;
         for(const t of col){
