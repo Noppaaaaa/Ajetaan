@@ -173,11 +173,11 @@ function roadInsertHash(i){
 }
 function roadPush(){
     // smooth meander from low-frequency noise on the index
-    const gate = fbm(rGenI*0.006+99, 0.5, 2) > 0.5 ? 1 : 0;
     const raw = (fbm(rGenI*0.028+5, 0.5, 4)-0.5) * 0.6;
-    const curve = (raw + _roadBias * 0.1) * gate;
+    const curve = raw + _roadBias * 0.2;
     _roadBias = raw > 0.01 ? 0.3 : (raw < -0.01 ? -0.3 : _roadBias);
     rGenA += curve;
+    rGenA = clamp(rGenA, -Math.PI/2, Math.PI/2);
     rGenX += Math.sin(rGenA)*ROAD_STEP;
     rGenZ += Math.cos(rGenA)*ROAD_STEP;
     const nat = naturalHeight(rGenX, rGenZ);
