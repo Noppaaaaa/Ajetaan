@@ -1217,7 +1217,7 @@ function update(dt){
 
     pos.y=groundY;
     car.position.set(pos.x, bodyY, pos.z);
-    car.rotation.set(bodyPitch, heading, bodyRoll);
+    car.rotation.set(bodyPitch, -heading, bodyRoll);
 
     // ── submerged too long → put the car back on the road ──
     if(groundY < SEA-0.4){ waterTime += dt; if(waterTime>5){ resetCar(); waterTime=0; } }
