@@ -1090,11 +1090,13 @@ function resetCar(){
     const p=roadWP[bi], q=roadWP[bi+1]||roadWP[bi-1]||p;
     pos.set(p.x, p.y, p.z);
     heading=Math.atan2(q.x-p.x, q.z-p.z);
+    camHeading=heading;
     vx=vz=0; gear=0;
 }
 
 // ── Camera ──
 let camMode=0; // 0 chase, 1 near, 2 hood
+let camHeading=0;
 const camPos=new THREE.Vector3().copy(camera.position);
 function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 
@@ -1375,11 +1377,13 @@ function update(dt){
 }
 
 function updateCamera(dt, vabs, F){
+    camHeading += (heading - camHeading) * Math.min(1, 2*dt);
+    const cf = {x:Math.sin(camHeading), z:Math.cos(camHeading)};
     let dist, height, look;
     if(camMode===0){ dist=8.5+vabs/MAX_SPEED*3.5; height=3.4+vabs/MAX_SPEED*0.8; look=9; }
     else if(camMode===1){ dist=5.5; height=2.3; look=7; }
     else { dist=-0.2; height=1.35; look=12; }   // hood cam
-    const tx=pos.x - F.x*dist, tz=pos.z - F.z*dist;
+    const tx=pos.x - cf.x*dist, tz=pos.z - cf.z*dist;
     const ty=(camMode===2? bodyY+height : Math.max(getHeight(tx,tz)+1.2, bodyY+height));
     const target=new THREE.Vector3(tx,ty,tz);
     const lerp = camMode===2 ? 1 : Math.min(1,(3+vabs/MAX_SPEED*2.5)*dt);
@@ -1388,7 +1392,7 @@ function updateCamera(dt, vabs, F){
         const minY=getHeight(camPos.x,camPos.z)+1.0; if(camPos.y<minY)camPos.y=minY;
     }
     camera.position.copy(camPos);
-    camera.lookAt(pos.x+F.x*look, bodyY+1.2, pos.z+F.z*look);
+    camera.lookAt(pos.x+cf.x*look, bodyY+1.2, pos.z+cf.z*look);
     const fov = 62 + (vabs/MAX_SPEED)*2;
     camera.fov += (fov-camera.fov)*Math.min(1,4*dt); camera.updateProjectionMatrix();
     // ── motion blur ──
