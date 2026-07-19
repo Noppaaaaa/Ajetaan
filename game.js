@@ -796,8 +796,7 @@ function updateChunks(px,pz){
                 (rec.lod===2?_upgrade21:_upgrade10).push({key:k,x,z});
                 _upgrading.add(k);
             } else if(lod>rec.lod){
-                for(const o of rec.objs){ scene.remove(o); o.geometry?.dispose?.(); }
-                chunks.delete(k);
+                // keep old chunk visible until the new lower-LOD one is built
                 _chunkBuildQueue.set(k,{x,z,lod});
             }
         }
@@ -1652,10 +1651,7 @@ function processLodUpgrades(){
         let n=_chunksPerFrame;
         while(n-->0 && q.length){
             const job=q.shift();
-            const rec=chunks.get(job.key);
-            if(rec){ for(const o of rec.objs){ scene.remove(o); o.geometry?.dispose?.(); } chunks.delete(job.key); }
             _chunkBuildQueue.set(job.key,{x:job.x,z:job.z,lod:toLod});
-            _upgrading.delete(job.key);
         }
     }
     drain(_upgrade21,1);
@@ -1674,7 +1670,10 @@ function processChunkQueue(){
         if(!bestK) break;
         const job=_chunkBuildQueue.get(bestK);
         _chunkBuildQueue.delete(bestK);
+        const _old=chunks.get(bestK);
+        if(_old){ for(const o of _old.objs){ scene.remove(o); o.geometry?.dispose?.(); } }
         chunks.set(bestK, buildChunk(job.x,job.z,job.lod));
+        _upgrading.delete(bestK);
         if(chunks.size>=50) document.getElementById('loading').classList.add('hidden');
     }
 }
