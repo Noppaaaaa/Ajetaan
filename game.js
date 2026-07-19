@@ -10,7 +10,7 @@ let playerName = '';
 // ════════════════════════════════════════════════════════════
 
 // ── Tunables ──
-const SEA          = 0;        // sea level (y)
+const SEA          = 23;       // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
 let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
