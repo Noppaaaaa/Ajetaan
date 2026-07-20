@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ääretön Tie</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 <div id="name-prompt">
@@ -13,8 +13,18 @@
         <div class="np-sub">ENDLESS DRIVE</div>
         <input type="text" id="name-input" maxlength="16" placeholder="Kuljettaja" autofocus>
         <div class="np-colors" id="np-colors"></div>
-        <label id="np-solo" style="display:flex;align-items:center;justify-content:center;gap:8px;margin:10px 0 4px;font-size:13px;color:#cfd8e3;cursor:pointer"><input type="checkbox" id="solo-check"> Yksinpeli (ei muita pelaajia)</label>
-        <button id="name-btn">AJA</button>
+        <div class="np-modes">
+            <button id="btn-solo" class="mode-btn solo">
+                <span class="mb-icon">&#127950;</span>
+                <span class="mb-title">YKSINPELI</span>
+                <span class="mb-sub">Aja omassa rauhassa</span>
+            </button>
+            <button id="btn-multi" class="mode-btn multi">
+                <span class="mb-icon">&#127760;</span>
+                <span class="mb-title">MONINPELI</span>
+                <span class="mb-sub">Jaettu maailma muiden kanssa</span>
+            </button>
+        </div>
     </div>
 </div>
 
@@ -73,7 +83,6 @@ const _npColors=[['#2b6cc4','Sininen'],['#c42b2b','Punainen'],['#e0e0e6','Valkoi
 const _npCC=document.getElementById('np-colors'); let _npSel=null;
 const _savedName=localStorage.getItem('playerName');
 if(_savedName) document.getElementById('name-input').value=_savedName;
-if(localStorage.getItem('soloMode')==='1') document.getElementById('solo-check').checked=true;
 for(const [h] of _npColors){
     const b=document.createElement('button'); b.style.background=h;
     if(h==='#2b6cc4'){ b.classList.add('sel'); _npSel=b; }
@@ -81,14 +90,19 @@ for(const [h] of _npColors){
     _npCC.appendChild(b);
 }
 window.__pColor='#2b6cc4';
-document.getElementById('name-btn').addEventListener('click',function n(){
+function _startGame(solo){
     window.__pName=document.getElementById('name-input').value.trim()||'Kuljettaja';
     localStorage.setItem('playerName',window.__pName);
-    window.__solo=document.getElementById('solo-check').checked;
-    localStorage.setItem('soloMode',window.__solo?'1':'0');
+    window.__solo=solo;
+    localStorage.setItem('soloMode',solo?'1':'0');
     document.getElementById('name-prompt').classList.add('hidden');
+}
+document.getElementById('btn-solo').addEventListener('click',()=>_startGame(true));
+document.getElementById('btn-multi').addEventListener('click',()=>_startGame(false));
+// Enter käynnistää viimeksi käytetyllä tilalla
+document.getElementById('name-input').addEventListener('keydown',function(e){
+    if(e.key==='Enter')document.getElementById(localStorage.getItem('soloMode')==='1'?'btn-solo':'btn-multi').click();
 });
-document.getElementById('name-input').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('name-btn').click();});
 </script>
 <script type="importmap">
 {"imports":{

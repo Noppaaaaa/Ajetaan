@@ -13,9 +13,17 @@ canvas{display:block}
     padding:10px 16px;font-size:16px;color:#eaf2f8;text-align:center;outline:none;width:220px;transition:border-color .2s}
 #name-input:focus{border-color:rgba(127,196,240,.5)}
 #name-input::placeholder{color:rgba(255,255,255,.25)}
-#name-btn{background:linear-gradient(135deg,#7fc4f0,#a7e0c8);border:none;border-radius:8px;
-    padding:10px 40px;font-size:14px;font-weight:600;color:#0a0e14;cursor:pointer;letter-spacing:3px;transition:transform .15s}
-#name-btn:hover{transform:scale(1.05)}
+.np-modes{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.mode-btn{display:flex;flex-direction:column;align-items:center;gap:5px;border:none;border-radius:14px;
+    padding:20px 28px;min-width:170px;cursor:pointer;color:#0a0e14;
+    transition:transform .15s ease, box-shadow .2s ease}
+.mode-btn .mb-icon{font-size:26px;line-height:1}
+.mode-btn .mb-title{font-size:15px;font-weight:700;letter-spacing:3px}
+.mode-btn .mb-sub{font-size:10px;opacity:.72;letter-spacing:.4px}
+.mode-btn.solo{background:linear-gradient(135deg,#a7e0c8,#7fc4f0)}
+.mode-btn.multi{background:linear-gradient(135deg,#7fc4f0,#b89df2)}
+.mode-btn:hover{transform:scale(1.06) translateY(-2px);box-shadow:0 8px 28px rgba(127,196,240,.35)}
+.mode-btn:active{transform:scale(0.98)}
 .np-colors{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .np-colors button{width:28px;height:28px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;transition:transform .15s,border-color .2s}
 .np-colors button:hover{transform:scale(1.14)}

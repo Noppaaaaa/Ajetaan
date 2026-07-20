@@ -1197,17 +1197,23 @@ for(const [wx,wz] of wpos){
 }
 scene.add(car);
 
-// dust particles
+// particles: one shared pool, per-particle colour (dust, skid smoke,
+// exhaust, water splash) — single Points draw call, no extra cost
 const MAXP=400;
 const pPos=new Float32Array(MAXP*3), pVel=new Float32Array(MAXP*3), pLife=new Float32Array(MAXP);
-let pIdx=0;
-const pGeo=new THREE.BufferGeometry(); pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
-const pMat=new THREE.PointsMaterial({ color:0xbdb097, size:0.5, transparent:true, opacity:0.55, depthWrite:false });
+const pColA=new Float32Array(MAXP*3);
+let pIdx=0, _exhaustT=0;
+const pGeo=new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
+pGeo.setAttribute('color', new THREE.BufferAttribute(pColA,3));
+const pMat=new THREE.PointsMaterial({ vertexColors:true, size:0.5, transparent:true, opacity:0.55, depthWrite:false });
 scene.add(new THREE.Points(pGeo,pMat));
-function emit(x,y,z,n){
+function emit(x,y,z,n,r=0.74,g=0.69,b=0.59,up=1,spread=1){
     for(let i=0;i<n;i++){ const j=pIdx*3;
-        pPos[j]=x+(Math.random()-0.5)*0.6; pPos[j+1]=y+Math.random()*0.2; pPos[j+2]=z+(Math.random()-0.5)*0.6;
-        pVel[j]=(Math.random()-0.5)*2.5; pVel[j+1]=0.4+Math.random(); pVel[j+2]=(Math.random()-0.5)*2.5;
+        pPos[j]=x+(Math.random()-0.5)*0.6*spread; pPos[j+1]=y+Math.random()*0.2; pPos[j+2]=z+(Math.random()-0.5)*0.6*spread;
+        pVel[j]=(Math.random()-0.5)*2.5*spread; pVel[j+1]=(0.4+Math.random())*up; pVel[j+2]=(Math.random()-0.5)*2.5*spread;
+        const v=0.9+Math.random()*0.2;
+        pColA[j]=r*v; pColA[j+1]=g*v; pColA[j+2]=b*v;
         pLife[pIdx]=0.5+Math.random()*0.6; pIdx=(pIdx+1)%MAXP;
     }
 }
@@ -1512,16 +1518,32 @@ function update(dt){
         if(++_trackUploadTick%3===0){ flattenTex.needsUpdate=true; trackTex.needsUpdate=true; }
     }
 
-    // ── dust when sliding / offroad ──
+    // ── particle effects ──
     const sliding = Math.abs(vl)>2.5 || hb;
-    if(vabs>6 && (sliding || !onRoad)){
+    // dust offroad
+    if(vabs>6 && !onRoad){
         const n=Math.min(6, Math.floor(vabs/12)+1+(hb?2:0));
-        emit(pos.x - F2.x*1.8, groundY, pos.z - F2.z*1.8, n);
+        emit(pos.x - F2.x*1.8, groundY, pos.z - F2.z*1.8, n, 0.74,0.69,0.59);
+    }
+    // white tire smoke when sliding on asphalt
+    if(onRoad && sliding && vabs>6){
+        emit(pos.x - F2.x*1.5, bodyY+0.1, pos.z - F2.z*1.5, 2, 0.88,0.88,0.9, 1.3, 0.8);
+    }
+    // exhaust puffs under hard acceleration from low speed
+    _exhaustT+=dt;
+    if(throttle>0.6 && vabs<9 && _exhaustT>0.09){
+        _exhaustT=0;
+        emit(pos.x - F2.x*2.2, bodyY+0.35, pos.z - F2.z*2.2, 1, 0.45,0.45,0.47, 0.45, 0.3);
+    }
+    // water splash at the bow when driving in water
+    if(groundY < SEA+0.05 && vabs>4){
+        emit(pos.x + F2.x*1.6, SEA+0.25, pos.z + F2.z*1.6, 3, 0.62,0.78,0.88, 2.2, 1.4);
     }
     for(let i=0;i<MAXP;i++){ if(pLife[i]>0){ pLife[i]-=dt; const j=i*3;
         pPos[j]+=pVel[j]*dt; pPos[j+1]+=pVel[j+1]*dt; pPos[j+2]+=pVel[j+2]*dt; pVel[j+1]-=2*dt;
     } else { pPos[i*3+1]=-999; } }
     pGeo.attributes.position.needsUpdate=true;
+    pGeo.attributes.color.needsUpdate=true;
     updateTracks(dt);
 
     // ── gears / rpm ──
@@ -1814,7 +1836,6 @@ document.getElementById('show-debug').addEventListener('change', function(){
 // ── Name prompt ──
 const namePrompt = document.getElementById('name-prompt');
 const nameInput = document.getElementById('name-input');
-const nameBtn = document.getElementById('name-btn');
 const ownTag = document.createElement('div');
 ownTag.className = 'name-tag';
 ownTag.textContent = playerName || 'Kuljettaja';
@@ -1839,9 +1860,9 @@ if (window.__pName) {
     document.getElementById('loading').classList.add('hidden');
 } else if (!playerName) {
     namePrompt.classList.remove('hidden'); nameInput.focus();
-    const submit = () => {
+    const submit = (solo) => {
         playerName = nameInput.value.trim() || 'Kuljettaja';
-        soloMode = !!window.__solo || !!document.getElementById('solo-check')?.checked;
+        soloMode = solo;
         namePrompt.classList.add('hidden');
         ownTag.textContent = playerName;
         carColorHex = window.__pColor || '#2b6cc4';
@@ -1849,8 +1870,10 @@ if (window.__pName) {
         _canDrive = true;
         document.getElementById('loading').classList.add('hidden');
     };
-    nameBtn.addEventListener('click', submit);
-    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+    document.getElementById('btn-solo')?.addEventListener('click', () => submit(true));
+    document.getElementById('btn-multi')?.addEventListener('click', () => submit(false));
+    // Enter = käynnistä viimeksi käytetyllä tilalla (napit hoitavat piilotuksen inline-skriptissä)
+    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submit(localStorage.getItem('soloMode')==='1'); });
 } else namePrompt.classList.add('hidden');
 
 
