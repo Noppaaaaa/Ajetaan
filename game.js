@@ -4,6 +4,8 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import * as net from './net.js';
 
 let playerName = '';
+let soloMode = false;      // yksinpeli: ei lähetetä sijaintia, ei näytetä muita
+let _soloApplied = false;
 
 // ════════════════════════════════════════════════════════════
 //  ÄÄRETÖN TIE — endless procedural driving
@@ -932,6 +934,7 @@ function rebuildRoad(centerIdx){
 //  CAR
 // ════════════════════════════════════════════════════════════
 const car = new THREE.Group();
+car.rotation.order = 'YXZ';   // yaw first, then pitch/roll in the car's own frame
 // Body colour (used by colour picker and ghost cars)
 const bodyMat = new THREE.MeshPhysicalMaterial({ color:0x2b6cc4, metalness:0.55, roughness:0.35, clearcoat:1, clearcoatRoughness:0.2 });
 
@@ -947,7 +950,10 @@ const bodyMat = new THREE.MeshPhysicalMaterial({ color:0x2b6cc4, metalness:0.55,
         const objLoader = new OBJLoader();
         objLoader.setMaterials(materials);
         const model = await objLoader.loadAsync(window.__CAR_URL || 'auto/car.obj');
-        // Center the model (it's exported offset from origin)
+        // the OBJ is modelled nose towards +X — turn it so the nose points to
+        // local +Z, the forward axis the physics and wheel layout assume
+        model.rotation.y = -Math.PI/2;
+        // Center the model (it's exported offset from origin; bbox after rotation)
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
         model.position.sub(center);
@@ -1279,11 +1285,15 @@ function update(dt){
         if (vy < 0) vy = -vy * 0.15;
     }
     bodyPitch += (tgtPitch*0.7 + accelLean*0.06 - bodyPitch)*Math.min(1,8*dt);
-    bodyRoll  += (tgtRoll*0.7 + corner - bodyRoll)*Math.min(1,8*dt);
+    // terrain roll negated: in the unmirrored frame positive rotation.z lifts
+    // the right (+x) side, but higher left wheels must lift the LEFT side
+    bodyRoll  += (-tgtRoll*0.7 + corner - bodyRoll)*Math.min(1,8*dt);
 
     pos.y=groundY;
     car.position.set(pos.x, bodyY, pos.z);
-    car.rotation.set(bodyPitch, -heading, bodyRoll);
+    // +heading, same sign convention as the ghost cars — the old -heading
+    // mirrored the model so it visibly turned opposite to the actual motion
+    car.rotation.set(bodyPitch, heading, bodyRoll);
 
     // ── submerged too long → put the car back on the road ──
     if(groundY < SEA-0.4){ waterTime += dt; if(waterTime>5){ resetCar(); waterTime=0; } }
@@ -1376,9 +1386,17 @@ function update(dt){
     updateBirds(dt);
 
     // ── multiplayer ──
-    netTimer+=dt;
-    if(netTimer>0.04){ netTimer=0;
-        net.publish({ x:+pos.x.toFixed(1), z:+pos.z.toFixed(1), h:+heading.toFixed(3), s:+vf.toFixed(1), c:carColorHex, n:playerName });
+    if(soloMode && !_soloApplied){
+        _soloApplied = true;
+        chatEl.classList.add('hidden'); chatReopen.classList.add('hidden');
+        for(const [id,p] of peers){ scene.remove(p.group); p.nameTag?.remove(); }
+        peers.clear();
+    }
+    if(!soloMode){
+        netTimer+=dt;
+        if(netTimer>0.04){ netTimer=0;
+            net.publish({ x:+pos.x.toFixed(1), z:+pos.z.toFixed(1), h:+heading.toFixed(3), s:+vf.toFixed(1), c:carColorHex, n:playerName });
+        }
     }
     updatePeers(dt);
 
@@ -1621,6 +1639,7 @@ function applyCarColor(hex) {
 window.__apc = (hex) => { carColorHex = hex; applyCarColor(hex); };
 if (window.__pName) {
     playerName = window.__pName;
+    soloMode = !!window.__solo;
     carColorHex = window.__pColor || '#2b6cc4';
     applyCarColor(carColorHex);
     ownTag.textContent = playerName;
@@ -1629,6 +1648,7 @@ if (window.__pName) {
     namePrompt.classList.remove('hidden'); nameInput.focus();
     const submit = () => {
         playerName = nameInput.value.trim() || 'Kuljettaja';
+        soloMode = !!window.__solo || !!document.getElementById('solo-check')?.checked;
         namePrompt.classList.add('hidden');
         ownTag.textContent = playerName;
         carColorHex = window.__pColor || '#2b6cc4';
@@ -1664,13 +1684,13 @@ function chatSendMsg() {
     chatAdd('<span class="name">' + (playerName || 'Kuljettaja') + '</span> ' + t);
     chatInput.value = '';
 }
-function chatHide() { chatEl.classList.add('hidden'); chatReopen.classList.remove('hidden'); }
-function chatShow() { chatEl.classList.remove('hidden'); chatReopen.classList.add('hidden'); chatInput.focus(); }
+function chatHide() { chatEl.classList.add('hidden'); chatReopen.classList.toggle('hidden', soloMode); }
+function chatShow() { if(soloMode) return; chatEl.classList.remove('hidden'); chatReopen.classList.add('hidden'); chatInput.focus(); }
 chatSend.addEventListener('click', chatSendMsg);
 chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') chatSendMsg(); });
 chatClose?.addEventListener('click', chatHide);
 chatReopen?.addEventListener('click', chatShow);
-net.setChatHandler(d => chatAdd('<span class="name">' + (d.n || '??') + '</span> ' + d.t));
+net.setChatHandler(d => { if(soloMode) return; chatAdd('<span class="name">' + (d.n || '??') + '</span> ' + d.t); });
 
 // ════════════════════════════════════════════════════════════
 //  MULTIPLAYER — ghost cars of everyone in the shared world
@@ -1690,6 +1710,7 @@ function buildGhost(hex){
 net.setHandlers(
     d=>{  // peer position update
         _seenPeer = true;
+        if(soloMode) return;
         let p=peers.get(d.id);
         if(!p){
             const group=buildGhost(d.c); scene.add(group);
@@ -1715,7 +1736,7 @@ function updatePeers(dt){
         let dh=p.th-p.group.rotation.y; while(dh>Math.PI)dh-=6.2832; while(dh<-Math.PI)dh+=6.2832;
         p.group.rotation.y += dh*k;
     }
-    if(net.isConnected()){ onlineEl.classList.add('live'); onlineN.textContent=(peers.size+1)+' paikalla'; }
+    if(!soloMode && net.isConnected()){ onlineEl.classList.add('live'); onlineN.textContent=(peers.size+1)+' paikalla'; }
     else { onlineEl.classList.remove('live'); onlineN.textContent='Yksinpeli'; }
 }
 

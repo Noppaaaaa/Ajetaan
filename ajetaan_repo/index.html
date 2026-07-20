@@ -13,6 +13,7 @@
         <div class="np-sub">ENDLESS DRIVE</div>
         <input type="text" id="name-input" maxlength="16" placeholder="Kuljettaja" autofocus>
         <div class="np-colors" id="np-colors"></div>
+        <label id="np-solo" style="display:flex;align-items:center;justify-content:center;gap:8px;margin:10px 0 4px;font-size:13px;color:#cfd8e3;cursor:pointer"><input type="checkbox" id="solo-check"> Yksinpeli (ei muita pelaajia)</label>
         <button id="name-btn">AJA</button>
     </div>
 </div>
@@ -72,6 +73,7 @@ const _npColors=[['#2b6cc4','Sininen'],['#c42b2b','Punainen'],['#e0e0e6','Valkoi
 const _npCC=document.getElementById('np-colors'); let _npSel=null;
 const _savedName=localStorage.getItem('playerName');
 if(_savedName) document.getElementById('name-input').value=_savedName;
+if(localStorage.getItem('soloMode')==='1') document.getElementById('solo-check').checked=true;
 for(const [h] of _npColors){
     const b=document.createElement('button'); b.style.background=h;
     if(h==='#2b6cc4'){ b.classList.add('sel'); _npSel=b; }
@@ -82,6 +84,8 @@ window.__pColor='#2b6cc4';
 document.getElementById('name-btn').addEventListener('click',function n(){
     window.__pName=document.getElementById('name-input').value.trim()||'Kuljettaja';
     localStorage.setItem('playerName',window.__pName);
+    window.__solo=document.getElementById('solo-check').checked;
+    localStorage.setItem('soloMode',window.__solo?'1':'0');
     document.getElementById('name-prompt').classList.add('hidden');
 });
 document.getElementById('name-input').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('name-btn').click();});
