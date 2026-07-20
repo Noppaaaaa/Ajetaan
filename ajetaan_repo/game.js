@@ -10,7 +10,7 @@ let playerName = '';
 // ════════════════════════════════════════════════════════════
 
 // ── Tunables ──
-const SEA          = 23;       // sea level (y)
+const SEA          = 15;       // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
 let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
@@ -316,34 +316,44 @@ fillLight.position.copy(sunDir).multiplyScalar(-1); scene.add(fillLight);
 })();
 
 // ── 3D clouds: lit puffball clusters that drift and follow the player ──
-const cloudGroup = new THREE.Group();
+// all puffs share one geometry+material, so they render as a single
+// InstancedMesh (1 draw call) instead of ~470 separate transparent meshes
 const cloudMat = new THREE.MeshStandardMaterial({ color:0xffffff, roughness:1, metalness:0, transparent:true, opacity:0.92, emissive:0x8899aa, emissiveIntensity:0.12 });
 const puffGeo = new THREE.IcosahedronGeometry(1, 1);
-const clouds = [];
+const clouds = [];      // {x,y,z,drift}
+const cloudPuffs = [];  // {ci, ox,oy,oz, sx,sy,sz}
 for(let i=0;i<78;i++){
-    const cloud=new THREE.Group();
     const puffs=4+Math.floor(Math.random()*5);
     for(let j=0;j<puffs;j++){
-        const p=new THREE.Mesh(puffGeo, cloudMat);
         const r=22+Math.random()*30;
-        p.position.set((Math.random()-0.5)*90, (Math.random()-0.5)*14, (Math.random()-0.5)*45);
-        p.scale.set(r, r*(0.55+Math.random()*0.2), r*(0.8+Math.random()*0.3));
-        cloud.add(p);
+        cloudPuffs.push({ ci:i,
+            ox:(Math.random()-0.5)*90, oy:(Math.random()-0.5)*14, oz:(Math.random()-0.5)*45,
+            sx:r, sy:r*(0.55+Math.random()*0.2), sz:r*(0.8+Math.random()*0.3) });
     }
     const a=Math.random()*6.28, rad=250+Math.random()*750;
-    cloud.position.set(Math.cos(a)*rad, 240+Math.random()*220, Math.sin(a)*rad);
-    cloud.userData.drift = 4 + Math.random()*6;
-    clouds.push(cloud); cloudGroup.add(cloud);
+    clouds.push({ x:Math.cos(a)*rad, y:240+Math.random()*220, z:Math.sin(a)*rad, drift:4+Math.random()*6 });
 }
-scene.add(cloudGroup);
+const cloudMesh = new THREE.InstancedMesh(puffGeo, cloudMat, cloudPuffs.length);
+cloudMesh.frustumCulled = false;   // the cloudscape always surrounds the camera
+scene.add(cloudMesh);
+const _cloudM = new THREE.Matrix4();
 function updateClouds(dt){
     // keep the cloudscape centred on the camera so it feels endless
-    cloudGroup.position.x = camera.position.x;
-    cloudGroup.position.z = camera.position.z;
+    const bx = camera.position.x, bz = camera.position.z;
     for(const c of clouds){
-        c.position.x += c.userData.drift * dt;
-        if(c.position.x > 1050) c.position.x -= 2100;   // wrap around
+        c.x += c.drift * dt;
+        if(c.x > 1050) c.x -= 2100;   // wrap around
     }
+    for(let i=0;i<cloudPuffs.length;i++){
+        const p=cloudPuffs[i], c=clouds[p.ci];
+        const e=_cloudM.elements;
+        e[0]=p.sx; e[1]=0; e[2]=0; e[3]=0;
+        e[4]=0; e[5]=p.sy; e[6]=0; e[7]=0;
+        e[8]=0; e[9]=0; e[10]=p.sz; e[11]=0;
+        e[12]=bx+c.x+p.ox; e[13]=c.y+p.oy; e[14]=bz+c.z+p.oz; e[15]=1;
+        cloudMesh.setMatrixAt(i,_cloudM);
+    }
+    cloudMesh.instanceMatrix.needsUpdate = true;
 }
 
 // ── birds ──
@@ -796,12 +806,14 @@ let _chunkTick=0;
 function updateChunks(px,pz){
     const cx=Math.round(px/CHUNK), cz=Math.round(pz/CHUNK);
     camChunkX=px/CHUNK; camChunkZ=pz/CHUNK;
-    if(cx!==_lastNeedCX||cz!==_lastNeedCZ){
-        _lastNeedCX=cx; _lastNeedCZ=cz;
-        _cachedNeed.clear();
-        for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
-            _cachedNeed.add((cx+dx)+','+(cz+dz));
-        }
+    // need-set and every LOD distance depend only on the chunk cell — nothing
+    // below can change until the player crosses into a new cell, so skip the
+    // full ~2×(2·VIEW_R+1)² scan on the frames in between
+    if(cx===_lastNeedCX && cz===_lastNeedCZ) return;
+    _lastNeedCX=cx; _lastNeedCZ=cz;
+    _cachedNeed.clear();
+    for(let dx=-VIEW_R;dx<=VIEW_R;dx++) for(let dz=-VIEW_R;dz<=VIEW_R;dz++){
+        _cachedNeed.add((cx+dx)+','+(cz+dz));
     }
     const need=_cachedNeed;
     for(const [k,rec] of chunks){
@@ -1097,6 +1109,7 @@ function resetCar(){
 // ── Camera ──
 let camMode=0; // 0 chase, 1 near, 2 hood
 let camHeading=0;
+let _lastBlur=-1;
 const camPos=new THREE.Vector3().copy(camera.position);
 function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 
@@ -1123,6 +1136,7 @@ function update(dt){
     // road check
     const rinfo=roadInfo(pos.x,pos.z);
     const onRoad = rinfo.d < ROAD_HALF+1.5;
+    if(rinfo.i>=0) _miniRoadIdx=rinfo.i;
 
     // ── ground contact: tire forces only exist when the wheels touch ──
     const groundHere = getHeight(pos.x,pos.z);
@@ -1203,7 +1217,8 @@ function update(dt){
     const colR=3.5;
     const ckx=Math.round(pos.x/CHUNK), ckz=Math.round(pos.z/CHUNK);
     _colFrame++;
-    if(_colFrame&1) for(let dx=-4;dx<=4;dx++) for(let dz=-4;dz<=4;dz++){
+    // ±1 chunk = 20 m reach, far beyond any collider radius (max ~8 m)
+    if(_colFrame&1) for(let dx=-1;dx<=1;dx++) for(let dz=-1;dz<=1;dz++){
         const col=collideByChunk.get((ckx+dx)+','+(ckz+dz));
         if(!col) continue;
         for(const t of col){
@@ -1228,7 +1243,7 @@ function update(dt){
 
     // ── tire tracks (rear wheels only, on solid ground) ──
     let rearOnRoad = false;
-    for(const w of wheels) if(w.z<0){
+    if(vabs>0.5) for(const w of wheels) if(w.z<0){   // result only used when moving
         const wxg=pos.x+F2.x*w.z+R2.x*w.x, wzg=pos.z+F2.z*w.z+R2.z*w.x;
         if(roadInfo(wxg,wzg).d < ROAD_HALF+1.5) rearOnRoad = true;
     }
@@ -1285,7 +1300,9 @@ function update(dt){
     }
 
     // ── persistent tracks + flatten ──
-    if(_canDrive){
+    // a stationary car repaints the same pixels, so skip both the canvas
+    // draws and the two 1024² texture uploads until the car actually moves
+    if(_canDrive && (vabs>0.05 || Math.abs(vl)>0.05)){
         const ws=TRACK_HALF*0.6;
         if(Math.abs(pos.x-trackCX)>ws||Math.abs(pos.z-trackCZ)>ws) recenterTrackMaps(pos.x,pos.z);
         const ca=heading, sa=Math.sin(ca), co=Math.cos(ca);
@@ -1413,10 +1430,11 @@ function updateCamera(dt, vabs, F){
     camera.position.copy(camPos);
     camera.lookAt(pos.x+F.x*look, bodyY+1.2, pos.z+F.z*look);
     const fov = 62 + (vabs/MAX_SPEED)*2;
-    camera.fov += (fov-camera.fov)*Math.min(1,4*dt); camera.updateProjectionMatrix();
-    // ── motion blur ──
-    const blur = clamp((vabs/MAX_SPEED)*1.2, 0, 1.2);
-    renderer.domElement.style.filter = blur ? `blur(${blur}px)` : '';
+    const newFov = camera.fov + (fov-camera.fov)*Math.min(1,4*dt);
+    if(Math.abs(newFov-camera.fov)>0.002){ camera.fov=newFov; camera.updateProjectionMatrix(); }
+    // ── motion blur (write the style only when the value actually changes) ──
+    const blur = Math.round(clamp((vabs/MAX_SPEED)*1.2, 0, 1.2)*50)/50;
+    if(blur!==_lastBlur){ _lastBlur=blur; renderer.domElement.style.filter = blur ? `blur(${blur}px)` : ''; }
     // ── FPS / Ping display ──
     _fpsFrames++;
     const fpsNow=performance.now();
@@ -1440,14 +1458,21 @@ const _fpsEl=document.getElementById('fps-val'), _pingEl=document.getElementById
 const _debugEl=document.getElementById('debug');
 const miniCanvas=document.getElementById('minimap');
 const miniCtx=miniCanvas.getContext('2d');
+const _altEl=document.getElementById('altitude');
+const _rpmFillEl=document.getElementById('rpm-fill');
+let _lastSpeed=-1, _lastGear=-1, _lastAlt=-1e9, _lastRpmPct=-1;
 function updateHUD(vf){
-    speedEl.textContent=Math.round(Math.abs(vf)*3.6);
-    gearEl.firstChild.textContent=gearNames[gear];
-    document.getElementById('altitude').textContent=Math.round(bodyY);
-    document.getElementById('rpm-fill').style.width = (rpm / REDLINE_RPM * 100) + '%';
+    const spd=Math.round(Math.abs(vf)*3.6);
+    if(spd!==_lastSpeed){ _lastSpeed=spd; speedEl.textContent=spd; }
+    if(gear!==_lastGear){ _lastGear=gear; gearEl.firstChild.textContent=gearNames[gear]; }
+    const alt=Math.round(bodyY);
+    if(alt!==_lastAlt){ _lastAlt=alt; _altEl.textContent=alt; }
+    const rpmPct=Math.round(rpm / REDLINE_RPM * 200)/2;   // 0.5 % steps
+    if(rpmPct!==_lastRpmPct){ _lastRpmPct=rpmPct; _rpmFillEl.style.width = rpmPct + '%'; }
     if(++_hudSkip%3===0){ drawMini(); drawCompass(); }
 }
 const MINI_R=280;
+let _miniRoadIdx=0;
 function drawMini(){
     const s=140, hs=s/2, c=miniCtx;
     c.clearRect(0,0,s,s); c.save();
@@ -1456,10 +1481,12 @@ function drawMini(){
     c.fillStyle='rgba(30,60,80,0.35)'; c.fillRect(0,0,s,s);
     // heading-up projection
     const fX=Math.sin(heading), fZ=Math.cos(heading), rX=Math.cos(heading), rZ=-Math.sin(heading);
-    // road
+    // road — the ±45° heading clamp means waypoints further than ~35 indices
+    // away can never lie inside MINI_R, so a ±100 window is always complete
     c.strokeStyle='rgba(240,240,245,0.8)'; c.lineWidth=2.4; c.beginPath();
     let started=false;
-    for(let i=0;i<roadWP.length;i++){
+    const i0=Math.max(0,_miniRoadIdx-100), i1=Math.min(roadWP.length,_miniRoadIdx+100);
+    for(let i=i0;i<i1;i++){
         const w=roadWP[i]; const dx=w.x-pos.x, dz=w.z-pos.z;
         if(dx*dx+dz*dz>MINI_R*MINI_R){ started=false; continue; }
         const sx=hs+(dx*rX+dz*rZ)/MINI_R*hs, sy=hs-(dx*fX+dz*fZ)/MINI_R*hs;
