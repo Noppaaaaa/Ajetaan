@@ -27,9 +27,9 @@ const LOD_R        = 10;       // chunks within this radius get full quality
 const FAR_LOD_R    = 20;       // chunks beyond this get bare terrain only (no vegetation)
 
 // Car / physics
-const MAX_SPEED    = 84;       // m/s (~302 km/h)
-const MAX_REVERSE  = 14;
-const ACCEL        = 13;
+const MAX_SPEED    = 100;       // m/s (~302 km/h)
+const MAX_REVERSE  = 20;
+const ACCEL        = 20;
 const BRAKE        = 26;
 const TURN_RATE    = 1;
 const WHEELBASE    = 2.7;
