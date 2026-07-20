@@ -12,7 +12,7 @@ let _soloApplied = false;
 // ════════════════════════════════════════════════════════════
 
 // ── Tunables ──
-const SEA          = 23;       // sea level (y)
+const SEA          = 15;       // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
 let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
@@ -27,27 +27,27 @@ const LOD_R        = 15;       // chunks within this radius get full quality
 const FAR_LOD_R    = 20;       // chunks beyond this get bare terrain only (no vegetation)
 
 // Car / physics
-const MAX_SPEED    = 97;       // m/s (~349 km/h)
+const MAX_SPEED    = 84;       // m/s (~302 km/h)
 const MAX_REVERSE  = 14;
 const ACCEL        = 13;
 const BRAKE        = 26;
-const TURN_RATE    = 0.5;
+const TURN_RATE    = 1;
 const WHEELBASE    = 2.7;
 const TRACK        = 1.7;
 const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
 const GRAVITY      = 9.81;
-const CAR_MASS     = 1500;
-const ENGINE_MAX_TORQUE = 322;
+const CAR_MASS     = 2000;
+const ENGINE_MAX_TORQUE = 280;
 const REDLINE_RPM  = 7000;
 const IDLE_RPM     = 900;
 const GEAR_RATIOS  = [0, 3.5, 2.1, 1.4, 1.0, 0.75];
 const FINAL_DRIVE  = 3.5;
 const DRIVETRAIN_EFF = 0.85;
 const MAX_STEER_ANGLE = 0.55;
-const TIRE_FRICTION_ROAD = 0.6;
-const TIRE_FRICTION_OFFROAD = 0.3;
-const ROLLING_RESIST = 0.02;
+const TIRE_FRICTION_ROAD = 1.0;
+const TIRE_FRICTION_OFFROAD = 0.6;
+const ROLLING_RESIST = 0.015;
 const AIR_DENSITY   = 1.225;
 const DRAG_COEF     = 0.35;
 const FRONTAL_AREA  = 2.2;
@@ -1192,7 +1192,7 @@ function update(dt){
         vl -= vl * clamp(maxLatForce * latFactor / (Math.abs(vl)*CAR_MASS + 1) * dt, 0, 1);
     }
 
-    // ── steering ──
+    // ── steering (front wheels can only turn the car while touching the ground) ──
     const steerAngle = steer * MAX_STEER_ANGLE * (1 - clamp(Math.abs(vf)/25, 0, 0.7));
     if(onGround){
         const dir = vf >= 0 ? 1 : -1;
@@ -1201,8 +1201,6 @@ function update(dt){
         } else {
             heading += steerAngle * 3 * dir * dt;
         }
-    } else {
-        heading += steerAngle * 1 * Math.sign(vf+0.01) * dt;
     }
 
     // recompose velocity from (possibly rotated) basis
