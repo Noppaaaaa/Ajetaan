@@ -1125,8 +1125,8 @@ function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 function update(dt){
     if(dt>0.05)dt=0.05;
     let steer=0, throttle=0, brake=0;
-    if(keys.l)steer=1; if(keys.r)steer+=1;
-    if(keys.f)throttle-=1; if(keys.b)brake=1;
+    if(keys.l)steer+=1; if(keys.r)steer-=1;
+    if(keys.f)throttle=1; if(keys.b)brake=1;
     if(Math.abs(touchSteer)>0.12)steer=touchSteer;
     if(touchAccel>0.12)throttle=touchAccel; else if(touchAccel<-0.12)brake=-touchAccel;
     const hb=keys.hb;
