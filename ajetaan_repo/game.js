@@ -13,32 +13,32 @@ let _soloApplied = false;
 // ════════════════════════════════════════════════════════════
 
 // ── Tunables ──
-const SEA          = 15;       // sea level (y)
+const SEA          = 20;       // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
 let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
 let   _chunksPerFrame = 4;    // chunks built per frame (mutable via settings)
 let   _colFrame = 0;
 let   _canDrive = false;     // true after name prompt submitted
-const ROAD_STEP    = 12;       // spacing between road waypoints
+const ROAD_STEP    = 6;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
-const CARVE_R      = 30;       // terrain smoothing radius around road
+const CARVE_R      = 25;       // terrain smoothing radius around road
 const RCELL        = 24;       // road spatial-hash cell size
-const LOD_R        = 15;       // chunks within this radius get full quality
+const LOD_R        = 10;       // chunks within this radius get full quality
 const FAR_LOD_R    = 20;       // chunks beyond this get bare terrain only (no vegetation)
 
 // Car / physics
-const MAX_SPEED    = 84;       // m/s (~302 km/h)
-const MAX_REVERSE  = 14;
-const ACCEL        = 13;
+const MAX_SPEED    = 100;       // m/s (~302 km/h)
+const MAX_REVERSE  = 20;
+const ACCEL        = 20;
 const BRAKE        = 26;
-const TURN_RATE    = 1.7;
+const TURN_RATE    = 1;
 const WHEELBASE    = 2.7;
 const TRACK        = 1.7;
 const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
 const GRAVITY      = 9.81;
-const CAR_MASS     = 1500;
+const CAR_MASS     = 2000;
 const ENGINE_MAX_TORQUE = 280;
 const REDLINE_RPM  = 7000;
 const IDLE_RPM     = 900;
@@ -1736,6 +1736,7 @@ if (window.__pName) {
     applyCarColor(carColorHex);
     ownTag.textContent = playerName;
     _canDrive = true;
+    document.getElementById('loading').classList.add('hidden');
 } else if (!playerName) {
     namePrompt.classList.remove('hidden'); nameInput.focus();
     const submit = () => {
@@ -1746,6 +1747,7 @@ if (window.__pName) {
         carColorHex = window.__pColor || '#2b6cc4';
         applyCarColor(carColorHex);
         _canDrive = true;
+        document.getElementById('loading').classList.add('hidden');
     };
     nameBtn.addEventListener('click', submit);
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
