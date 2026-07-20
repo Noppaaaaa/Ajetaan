@@ -909,10 +909,10 @@ function buildRibbon(a,b,halfW,yOff){
         if(qn){ const dxq=qn.x-q.x, dzq=qn.z-q.z, lq=Math.hypot(dxq,dzq)||1;
             nxq=nx-dzq/lq; nzq=nz+dxq/lq; const ln=Math.hypot(nxq,nzq)||1; nxq/=ln; nzq/=ln; }
         const cur=vc;
-        v.push(p.x+nxp*halfW, p.y+yOff, p.z+nzp*halfW);
-        v.push(p.x-nxp*halfW, p.y+yOff, p.z-nzp*halfW);
-        v.push(q.x+nxq*halfW, q.y+yOff, q.z+nzq*halfW);
-        v.push(q.x-nxq*halfW, q.y+yOff, q.z-nzq*halfW);
+        v.push(p.x+nxp*halfW, getHeight(p.x+nxp*halfW, p.z+nzp*halfW)+yOff, p.z+nzp*halfW);
+        v.push(p.x-nxp*halfW, getHeight(p.x-nxp*halfW, p.z-nzp*halfW)+yOff, p.z-nzp*halfW);
+        v.push(q.x+nxq*halfW, getHeight(q.x+nxq*halfW, q.z+nzq*halfW)+yOff, q.z+nzq*halfW);
+        v.push(q.x-nxq*halfW, getHeight(q.x-nxq*halfW, q.z-nzq*halfW)+yOff, q.z-nzq*halfW);
         vc+=4;
         idx.push(cur, cur+2, cur+1, cur+1, cur+2, cur+3);
     }
