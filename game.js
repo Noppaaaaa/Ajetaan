@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as net from './net.js';
 
 let playerName = '';
@@ -426,16 +427,28 @@ const waterMat = new THREE.ShaderMaterial({
         gl_Position=projectionMatrix*viewMatrix*wp;
     }`,
     fragmentShader:`
-    uniform vec3 sunDir,deep,shallow; varying vec3 vW; varying vec3 vN;
+    uniform vec3 sunDir,deep,shallow; uniform float time; varying vec3 vW; varying vec3 vN;
     void main(){
+        // fine moving ripples perturb the normal per-pixel (cheap ALU only)
+        float r1 = sin(vW.x*1.3 + time*2.1) * sin(vW.z*1.1 - time*1.7);
+        float r2 = sin((vW.x+vW.z)*2.6 + time*3.2);
+        vec3 N = normalize(vec3(vN.x + r1*0.055 + r2*0.028, vN.y, vN.z + r1*0.04 - r2*0.028));
         vec3 V=normalize(cameraPosition-vW);
-        float fres=pow(1.0-max(dot(V,vN),0.0),3.0);
-        vec3 col=mix(deep,shallow,fres*0.9+0.1);
-        vec3 R=reflect(-sunDir,vN);
-        float spec=pow(max(dot(R,V),0.0),90.0);
-        col += vec3(1.0,0.95,0.85)*spec*0.9;
-        col += shallow*0.15;
-        gl_FragColor=vec4(col, 0.86);
+        float fres=pow(1.0-max(dot(V,N),0.0),3.0);
+        vec3 col=mix(deep,shallow,fres*0.55+0.1);
+        // grazing angles reflect the sky instead of just brightening the water
+        col = mix(col, vec3(0.72,0.81,0.87), fres*0.5);
+        vec3 R=reflect(-sunDir,N);
+        float d=max(dot(R,V),0.0);
+        float spec=pow(d,120.0);
+        float glit=pow(d,900.0);          // narrow sun glitter that twinkles with the ripples
+        col += vec3(1.0,0.95,0.85)*(spec*0.9 + glit*1.6);
+        col += shallow*0.12;
+        // blend into scene fog so the horizon doesn't show a hard water edge
+        float fd=length(cameraPosition-vW);
+        float fogF=1.0-exp(-0.0022*0.0022*fd*fd);
+        col=mix(col, vec3(0.737,0.827,0.878), fogF);
+        gl_FragColor=vec4(col, 0.86 + fres*0.08);
     }`
 });
 const waterGeo = new THREE.PlaneGeometry(3400,3400,80,80); waterGeo.rotateX(-Math.PI/2);
@@ -452,26 +465,46 @@ function ensureWater(){
 // ════════════════════════════════════════════════════════════
 // Simple, robust tree/rock geometries (trunk + one canopy, no geometry merging)
 const trunkGeo   = new THREE.CylinderGeometry(0.16,0.32,2.6,6).translate(0,1.3,0);
-const pineCanGeo = new THREE.ConeGeometry(1.5,4.4,7).translate(0,3.9,0);
-const leafCanGeo = new THREE.IcosahedronGeometry(1.9,1).scale(1,0.9,1).translate(0,3.6,0);
+// layered spruce: three stacked cones merged into ONE geometry (still 1 draw call)
+const pineCanGeo = mergeGeometries([
+    new THREE.ConeGeometry(1.7,2.8,7).translate(0,2.8,0),
+    new THREE.ConeGeometry(1.25,2.3,7).translate(0,4.2,0),
+    new THREE.ConeGeometry(0.8,1.9,7).translate(0,5.5,0)
+]);
+// irregular deciduous crown: main blob + two offset side blobs, merged
+const leafCanGeo = mergeGeometries([
+    new THREE.IcosahedronGeometry(1.9,1).scale(1,0.85,1).translate(0,3.5,0),
+    new THREE.IcosahedronGeometry(1.15,1).scale(1,0.85,1).translate(0.95,4.35,0.3),
+    new THREE.IcosahedronGeometry(0.95,1).scale(1,0.8,1).translate(-0.85,4.25,-0.45)
+]);
 const rockGeo    = new THREE.DodecahedronGeometry(2,0).scale(1,0.7,1.1);
 const trunkMat = new THREE.MeshStandardMaterial({ color:0x4a3524, roughness:0.9, metalness:0 });
 const pineMat  = new THREE.MeshStandardMaterial({ color:0x2f5d33, roughness:0.85, metalness:0, flatShading:true });
 const leafMat  = new THREE.MeshStandardMaterial({ color:0x4a7c35, roughness:0.85, metalness:0, flatShading:true });
-const bigLeafGeo = new THREE.IcosahedronGeometry(2.85,1).scale(1,0.9,1).translate(0,5.4,0);  // 1.5x leaf tree
+const bigLeafGeo = leafCanGeo.clone().scale(1.5,1.5,1.5);  // 1.5x leaf tree
 const bigLeafMat = new THREE.MeshStandardMaterial({ color:0x3d6e2e, roughness:0.85, metalness:0, flatShading:true });
 const rockMat  = new THREE.MeshStandardMaterial({ color:0x6b6b66, roughness:0.95, metalness:0, flatShading:true });
-const bushGeo  = new THREE.IcosahedronGeometry(1.2,1).scale(1,0.55,0.85);
+// lumpy bush: two overlapping blobs merged
+const bushGeo  = mergeGeometries([
+    new THREE.IcosahedronGeometry(1.2,1).scale(1,0.55,0.85),
+    new THREE.IcosahedronGeometry(0.8,1).scale(1,0.5,0.9).translate(0.7,0.12,0.35)
+]);
 const bushMat  = new THREE.MeshStandardMaterial({ color:0x3a7a2a, roughness:0.9, metalness:0, flatShading:true });
+const _tintC = new THREE.Color();   // scratch for per-instance tints
 
 // LOD versions (fewer polygons, no trunk/grass/bushes)
-const lodPineGeo = new THREE.ConeGeometry(1.5,4.4,5).translate(0,3.9,0);
+const lodPineGeo = mergeGeometries([
+    new THREE.ConeGeometry(1.7,2.9,5).translate(0,2.9,0),
+    new THREE.ConeGeometry(1.0,2.8,5).translate(0,4.9,0)
+]);
 const lodLeafGeo = new THREE.IcosahedronGeometry(1.9,0).scale(1,0.9,1).translate(0,3.6,0);
 const lodRockGeo = new THREE.BoxGeometry(1.4,1.0,1.6);
 
 // ── Audio (Web Audio API, procedural) ──
 let audioCtx = null;
-let engineMain, engineHarm, engineGain, engineFilter;
+let engineMain, engineHarm, engineSub, engineGain, engineFilter;
+let exhaustGain, exhaustFilter;
+let windGain, windFilter, roadGain, roadFilter, skidGain;
 let waterNoiseSrc, waterGain, waterFilter, waterLFO;
 let _collisionCD = 0;
 
@@ -480,10 +513,19 @@ function initAudio() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
 
+    // master bus: gentle compressor glues the layers and stops clipping
+    const comp = audioCtx.createDynamicsCompressor();
+    comp.threshold.value = -18; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2;
+    comp.connect(audioCtx.destination);
+    const master = comp;
+
+    // engine: saw + detuned square + half-frequency sub for body
     engineMain = audioCtx.createOscillator();
     engineMain.type = 'sawtooth';
     engineHarm = audioCtx.createOscillator();
     engineHarm.type = 'square';
+    engineSub = audioCtx.createOscillator();
+    engineSub.type = 'sawtooth';
     engineFilter = audioCtx.createBiquadFilter();
     engineFilter.type = 'lowpass';
     engineFilter.frequency.value = 300;
@@ -491,20 +533,53 @@ function initAudio() {
     engineGain.gain.value = 0;
     engineMain.connect(engineFilter);
     engineHarm.connect(engineFilter);
+    engineSub.connect(engineFilter);
     engineFilter.connect(engineGain);
-    engineGain.connect(audioCtx.destination);
+    engineGain.connect(master);
     engineMain.frequency.value = 50;
     engineHarm.frequency.value = 100;
+    engineSub.frequency.value = 25;
     engineMain.start();
     engineHarm.start();
+    engineSub.start();
 
-    const bufLen = Math.floor(audioCtx.sampleRate * 0.5);
+    // one shared looping noise buffer feeds every noise layer
+    const bufLen = Math.floor(audioCtx.sampleRate * 1.0);
     const noiseBuf = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
     const nd = noiseBuf.getChannelData(0);
     for (let i = 0; i < bufLen; i++) nd[i] = Math.random() * 2 - 1;
-    waterNoiseSrc = audioCtx.createBufferSource();
-    waterNoiseSrc.buffer = noiseBuf;
-    waterNoiseSrc.loop = true;
+    const noiseSrc = (filter) => {
+        const s = audioCtx.createBufferSource();
+        s.buffer = noiseBuf; s.loop = true;
+        s.connect(filter); s.start();
+        return s;
+    };
+
+    // exhaust rumble: bandpassed noise that follows rpm under throttle
+    exhaustFilter = audioCtx.createBiquadFilter();
+    exhaustFilter.type = 'bandpass'; exhaustFilter.frequency.value = 120; exhaustFilter.Q.value = 1.2;
+    exhaustGain = audioCtx.createGain(); exhaustGain.gain.value = 0;
+    noiseSrc(exhaustFilter); exhaustFilter.connect(exhaustGain); exhaustGain.connect(master);
+
+    // wind hiss: grows with speed squared
+    windFilter = audioCtx.createBiquadFilter();
+    windFilter.type = 'bandpass'; windFilter.frequency.value = 400; windFilter.Q.value = 0.4;
+    windGain = audioCtx.createGain(); windGain.gain.value = 0;
+    noiseSrc(windFilter); windFilter.connect(windGain); windGain.connect(master);
+
+    // tire-on-surface noise: dark rumble offroad, lighter hum on asphalt
+    roadFilter = audioCtx.createBiquadFilter();
+    roadFilter.type = 'lowpass'; roadFilter.frequency.value = 500;
+    roadGain = audioCtx.createGain(); roadGain.gain.value = 0;
+    noiseSrc(roadFilter); roadFilter.connect(roadGain); roadGain.connect(master);
+
+    // tire screech when sliding on the road
+    const skidFilter = audioCtx.createBiquadFilter();
+    skidFilter.type = 'bandpass'; skidFilter.frequency.value = 1100; skidFilter.Q.value = 5;
+    skidGain = audioCtx.createGain(); skidGain.gain.value = 0;
+    noiseSrc(skidFilter); skidFilter.connect(skidGain); skidGain.connect(master);
+
+    // water splash layer (unchanged behaviour)
     waterFilter = audioCtx.createBiquadFilter();
     waterFilter.type = 'lowpass';
     waterFilter.frequency.value = 600;
@@ -517,23 +592,37 @@ function initAudio() {
     lfoG.gain.value = 250;
     waterLFO.connect(lfoG);
     lfoG.connect(waterFilter.frequency);
-    waterNoiseSrc.connect(waterFilter);
+    waterNoiseSrc = noiseSrc(waterFilter);
     waterFilter.connect(waterGain);
-    waterGain.connect(audioCtx.destination);
-    waterNoiseSrc.start();
+    waterGain.connect(master);
     waterLFO.start();
 }
 
-function updateAudio(rpm, throttle) {
+function updateAudio(rpm, throttle, speed, onRoad, slide, hb) {
     if (!audioCtx) return;
     const t = audioCtx.currentTime;
     const r = rpm / REDLINE_RPM;
     const freq = 40 + r * 130;
     engineMain.frequency.linearRampToValueAtTime(freq, t + 0.08);
-    engineHarm.frequency.linearRampToValueAtTime(freq * 2.01, t + 0.08);
+    engineHarm.frequency.linearRampToValueAtTime(freq * 2.02, t + 0.08);
+    engineSub.frequency.linearRampToValueAtTime(freq * 0.5, t + 0.08);
     engineFilter.frequency.linearRampToValueAtTime(200 + r * 900, t + 0.08);
-    const vol = Math.max(0.005, throttle * 0.18 + r * 0.04);
+    const vol = Math.max(0.005, throttle * 0.16 + r * 0.05);
     engineGain.gain.linearRampToValueAtTime(vol, t + 0.08);
+    // exhaust follows rpm, loudest under load
+    exhaustFilter.frequency.linearRampToValueAtTime(90 + r * 420, t + 0.08);
+    exhaustGain.gain.linearRampToValueAtTime(throttle * 0.055 + r * 0.02, t + 0.08);
+    // wind
+    const sp = speed / MAX_SPEED;
+    windFilter.frequency.linearRampToValueAtTime(300 + sp * 900, t + 0.1);
+    windGain.gain.linearRampToValueAtTime(sp * sp * 0.16, t + 0.1);
+    // tires: darker and louder on gravel/grass
+    roadFilter.frequency.linearRampToValueAtTime(onRoad ? 650 : 220, t + 0.1);
+    const rollV = speed > 0.5 ? Math.min(0.055, speed * 0.0011) * (onRoad ? 1 : 2.4) : 0;
+    roadGain.gain.linearRampToValueAtTime(rollV, t + 0.1);
+    // skid screech only on asphalt
+    const skidV = (onRoad && speed > 5 && (slide > 3 || hb)) ? clamp((Math.max(slide, hb ? 4 : 0) - 3) / 6, 0, 1) * 0.11 : 0;
+    skidGain.gain.linearRampToValueAtTime(skidV, t + 0.06);
     const wv = waterTime > 0 ? Math.min(0.1, waterTime * 0.03) : 0;
     waterGain.gain.linearRampToValueAtTime(wv, t + 0.1);
 }
@@ -565,13 +654,15 @@ function resumeAudio() {
 document.addEventListener('pointerdown', resumeAudio);
 document.addEventListener('keydown', resumeAudio);
 
-// blade geometry for grass
+// blade geometry for grass: tapered, gently bent blade (3 tris instead of 1)
 const bladeGeo = (()=>{
     const g=new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-        -0.06,0,0, 0.06,0,0, 0,0.325,0
+        -0.06,0,0,      0.06,0,0,
+        -0.035,0.17,0.035,  0.035,0.17,0.035,
+         0,0.34,0.1
     ]),3));
-    g.setIndex([0,1,2]); g.computeVertexNormals(); return g;
+    g.setIndex([0,1,2, 1,3,2, 2,3,4]); g.computeVertexNormals(); return g;
 })();
 const grassMat = new THREE.MeshStandardMaterial({ color:0x6a9a4a, roughness:1, metalness:0, side:THREE.DoubleSide });
 // wind sway: displace blade tips based on world position + time
@@ -743,52 +834,53 @@ function buildChunk(cx,cz,lod){
         }
     }
 
-    function instanced(geoP,mat,mats,cast){
+    // per-instance colour variation sells "real forest" for the cost of one
+    // small attribute buffer; hueJit skews red/blue slightly for green hues
+    function instanced(geoP,mat,mats,cast,tintLo,tintHi,hueJit){
         if(!mats.length) return;
         const im=new THREE.InstancedMesh(geoP,mat,mats.length);
-        for(let i=0;i<mats.length;i++) im.setMatrixAt(i,mats[i]);
+        for(let i=0;i<mats.length;i++){
+            im.setMatrixAt(i,mats[i]);
+            const v=(tintLo??0.85)+rng()*((tintHi??1.15)-(tintLo??0.85));
+            const j=(rng()-0.5)*(hueJit??0);
+            _tintC.setRGB(v*(1+j), v, v*(1-j));
+            im.setColorAt(i,_tintC);
+        }
         im.instanceMatrix.needsUpdate=true; im.castShadow=cast; im.receiveShadow=false;
         im.frustumCulled=true; scene.add(im); rec.objs.push(im);
     }
     if(lod){
-        instanced(lodPineGeo, pineMat, pineM, false);
-        instanced(lodLeafGeo, leafMat, leafM, false);
-        instanced(lodLeafGeo, bigLeafMat, bigLeafM, false);
-        instanced(lodRockGeo, rockMat, rockM, false);
+        instanced(lodPineGeo, pineMat, pineM, false, 0.8, 1.15, 0.14);
+        instanced(lodLeafGeo, leafMat, leafM, false, 0.82, 1.2, 0.2);
+        instanced(lodLeafGeo, bigLeafMat, bigLeafM, false, 0.82, 1.2, 0.2);
+        instanced(lodRockGeo, rockMat, rockM, false, 0.75, 1.2, 0.05);
     } else {
-        instanced(trunkGeo, trunkMat, pineM.concat(leafM).concat(bigLeafM), true);
-        instanced(pineCanGeo, pineMat, pineM, true);
-        instanced(leafCanGeo, leafMat, leafM, true);
-        instanced(bigLeafGeo, bigLeafMat, bigLeafM, true);
-        instanced(rockGeo, rockMat, rockM, true);
-        instanced(bushGeo, bushMat, bushM, true);
+        instanced(trunkGeo, trunkMat, pineM.concat(leafM).concat(bigLeafM), true, 0.85, 1.1, 0.06);
+        instanced(pineCanGeo, pineMat, pineM, true, 0.8, 1.15, 0.14);
+        instanced(leafCanGeo, leafMat, leafM, true, 0.82, 1.2, 0.2);
+        instanced(bigLeafGeo, bigLeafMat, bigLeafM, true, 0.82, 1.2, 0.2);
+        instanced(rockGeo, rockMat, rockM, true, 0.75, 1.2, 0.05);
+        instanced(bushGeo, bushMat, bushM, true, 0.78, 1.22, 0.22);
 
-        if(grassPts.length){
-            const n=grassPts.length/3;
+        // per-blade colour: dry straw yellows through lush greens
+        function grassField(pts, sMin, sRange){
+            const n=pts.length/3;
             const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
             const d=new THREE.Object3D();
             for(let i=0;i<n;i++){
-                d.position.set(grassPts[i*3],grassPts[i*3+1],grassPts[i*3+2]);
-                const s=0.7+Math.random()*1.3; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
+                d.position.set(pts[i*3],pts[i*3+1],pts[i*3+2]);
+                const s=sMin+Math.random()*sRange; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
                 d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
                 im.setMatrixAt(i,d.matrix);
+                const dry=Math.random();
+                _tintC.setRGB(0.85+dry*0.45, 0.9+Math.random()*0.25, 0.65+ (1-dry)*0.3);
+                im.setColorAt(i,_tintC);
             }
             im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
             scene.add(im); rec.objs.push(im);
         }
-        if(grassSmallPts.length){
-            const n=grassSmallPts.length/3;
-            const im=new THREE.InstancedMesh(bladeGeo, grassMat, n);
-            const d=new THREE.Object3D();
-            for(let i=0;i<n;i++){
-                d.position.set(grassSmallPts[i*3],grassSmallPts[i*3+1],grassSmallPts[i*3+2]);
-                const s=0.35+Math.random()*0.65; d.scale.set(s, s*(1.0+Math.random()*1.1), s);
-                d.rotation.set(0,Math.random()*6.28,(Math.random()-0.5)*0.2); d.updateMatrix();
-                im.setMatrixAt(i,d.matrix);
-            }
-            im.instanceMatrix.needsUpdate=true; im.castShadow=false; im.receiveShadow=false;
-            scene.add(im); rec.objs.push(im);
-        }
+        if(grassPts.length) grassField(grassPts, 0.7, 1.3);
+        if(grassSmallPts.length) grassField(grassSmallPts, 0.35, 0.65);
     }
 
     collideByChunk.set(cx+','+cz, collide);
@@ -1358,7 +1450,7 @@ function update(dt){
 
     // ── audio ──
     if (!audioCtx) initAudio();
-    updateAudio(rpm, throttle);
+    updateAudio(rpm, throttle, vabs, onRoad, Math.abs(vl), hb);
 
     // ── camera ──
     updateCamera(dt, vabs, F2);
