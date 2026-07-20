@@ -27,7 +27,7 @@ const LOD_R        = 15;       // chunks within this radius get full quality
 const FAR_LOD_R    = 20;       // chunks beyond this get bare terrain only (no vegetation)
 
 // Car / physics
-const MAX_SPEED    = 84;       // m/s (~302 km/h)
+const MAX_SPEED    = 97;       // m/s (~349 km/h)
 const MAX_REVERSE  = 14;
 const ACCEL        = 13;
 const BRAKE        = 26;
@@ -38,7 +38,7 @@ const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
 const GRAVITY      = 9.81;
 const CAR_MASS     = 1500;
-const ENGINE_MAX_TORQUE = 280;
+const ENGINE_MAX_TORQUE = 322;
 const REDLINE_RPM  = 7000;
 const IDLE_RPM     = 900;
 const GEAR_RATIOS  = [0, 3.5, 2.1, 1.4, 1.0, 0.75];
@@ -1305,7 +1305,7 @@ function update(dt){
         vl -= vl * clamp(maxLatForce * latFactor / (Math.abs(vl)*CAR_MASS + 1) * dt, 0, 1);
     }
 
-    // ── steering (front wheels can only turn the car while touching the ground) ──
+    // ── steering ──
     const steerAngle = steer * MAX_STEER_ANGLE * (1 - clamp(Math.abs(vf)/25, 0, 0.7));
     if(onGround){
         const dir = vf >= 0 ? 1 : -1;
@@ -1314,6 +1314,8 @@ function update(dt){
         } else {
             heading += steerAngle * 3 * dir * dt;
         }
+    } else {
+        heading += steerAngle * 1 * Math.sign(vf+0.01) * dt;
     }
 
     // recompose velocity from (possibly rotated) basis
