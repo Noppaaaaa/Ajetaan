@@ -870,6 +870,7 @@ function regenerateWorld(epoch) {
     resetTrackMaps();
     if(trackOverlay){ scene.remove(trackOverlay); trackOverlay.geometry.dispose(); trackOverlay = null; }
     initTrackOverlay();
+    clearBridges();
     // Rebuild road & queue all chunks
     roadInit();
     resetCar();
@@ -930,6 +931,116 @@ function rebuildRoad(centerIdx){
     if(lineMesh){ scene.remove(lineMesh); lineMesh.geometry.dispose(); }
     roadMesh=new THREE.Mesh(rg, roadSurfMat); roadMesh.receiveShadow=true; roadMesh.renderOrder=0; scene.add(roadMesh);
     lineMesh=new THREE.Mesh(lg, lineSurfMat); scene.add(lineMesh);
+    buildBridges(a, b);
+}
+
+// ── Bridge (suspension bridge over water) ──
+const BRIDGE_TOWER_H = 22;
+const BRIDGE_SPREAD = 5.5;
+const BRIDGE_CABLE_DROOP = 5;
+const BRIDGE_CABLE_R = 0.07;
+const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x7a8a9a, metalness: 0.5, roughness: 0.4 });
+let bridgeGroup = null;
+function initBridgeGroup() {
+    if (!bridgeGroup) { bridgeGroup = new THREE.Group(); scene.add(bridgeGroup); }
+}
+function clearBridges() {
+    if (!bridgeGroup) return;
+    while (bridgeGroup.children.length) {
+        const c = bridgeGroup.children[0];
+        if (c.geometry) c.geometry.dispose();
+        bridgeGroup.remove(c);
+    }
+}
+function isOverWater(i) {
+    const w = roadWP[i]; if (!w) return false;
+    return naturalHeight(w.x, w.z) < SEA + 0.3;
+}
+function buildBridgeSeg(iStart, iEnd) {
+    const p1 = roadWP[iStart], p2 = roadWP[iEnd];
+    if (!p1 || !p2) return;
+    const dx = p2.x - p1.x, dz = p2.z - p1.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 10) return;
+    const angle = Math.atan2(dx, dz);
+    const cx = Math.cos(angle), sx = Math.sin(angle);
+    const baseY = Math.max(p1.y, p2.y);
+    const topY = baseY + BRIDGE_TOWER_H;
+    const tw = 0.5, sp = BRIDGE_SPREAD, th = topY - baseY;
+    // Towers at both ends
+    for (const p of [p1, p2]) {
+        for (const s of [-1, 1]) {
+            const pillar = new THREE.Mesh(new THREE.BoxGeometry(tw, th, tw), bridgeMat);
+            pillar.position.set(p.x - sx * sp * s, baseY + th / 2, p.z + cx * sp * s);
+            bridgeGroup.add(pillar);
+        }
+        for (const yOff of [0.2, BRIDGE_TOWER_H - 0.3]) {
+            const beam = new THREE.Mesh(new THREE.BoxGeometry(sp * 2 + 0.3, 0.3, 0.3), bridgeMat);
+            beam.position.set(p.x, baseY + yOff, p.z);
+            beam.rotation.y = -angle;
+            bridgeGroup.add(beam);
+        }
+    }
+    // Two main cables
+    for (const s of [-1, 1]) {
+        const pts = [];
+        const segs = 30;
+        for (let i = 0; i <= segs; i++) {
+            const t = i / segs;
+            const x = p1.x + dx * t;
+            const z = p1.z + dz * t;
+            const lt = t - 0.5;
+            const y = topY - BRIDGE_CABLE_DROOP * 4 * lt * lt;
+            pts.push(new THREE.Vector3(x - sx * sp * s, y, z + cx * sp * s));
+        }
+        const curve = new THREE.CatmullRomCurve3(pts);
+        const tube = new THREE.TubeGeometry(curve, 24, BRIDGE_CABLE_R, 5, false);
+        bridgeGroup.add(new THREE.Mesh(tube, bridgeMat));
+    }
+    // Suspender cables
+    const suspCount = Math.floor(dist / 3);
+    for (let i = 1; i < suspCount; i++) {
+        const t = i / suspCount;
+        const x = p1.x + dx * t;
+        const z = p1.z + dz * t;
+        const lt = t - 0.5;
+        const cableY = topY - BRIDGE_CABLE_DROOP * 4 * lt * lt;
+        const roadY = p1.y + (p2.y - p1.y) * t;
+        for (const s of [-1, 1]) {
+            const sx2 = x - sx * sp * s;
+            const sz2 = z + cx * sp * s;
+            const pts2 = [
+                new THREE.Vector3(sx2, cableY, sz2),
+                new THREE.Vector3(sx2, roadY, sz2),
+            ];
+            const curve2 = new THREE.CatmullRomCurve3(pts2);
+            const tube2 = new THREE.TubeGeometry(curve2, 4, 0.025, 4, false);
+            bridgeGroup.add(new THREE.Mesh(tube2, bridgeMat));
+        }
+    }
+}
+function buildBridges(a, b) {
+    clearBridges();
+    initBridgeGroup();
+    let start = -1;
+    const scanA = Math.max(0, a - 5), scanB = Math.min(roadWP.length, b + 5);
+    for (let i = scanA; i < scanB; i++) {
+        const wet = isOverWater(i);
+        if (wet && start < 0) start = i;
+        else if (!wet && start >= 0) {
+            if (i - start >= 3) {
+                const iStart = Math.max(a, start - 1);
+                const iEnd = Math.min(b, i);
+                if (iEnd > iStart) buildBridgeSeg(iStart, iEnd);
+            }
+            start = -1;
+        }
+    }
+    if (start >= 0 && scanB - start >= 3) {
+        const iStart = Math.max(a, start - 1);
+        const iEnd = Math.min(b, scanB - 1);
+        if (iEnd > iStart) buildBridgeSeg(iStart, iEnd);
+    }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1761,6 +1872,7 @@ localStorage.setItem('lastPlayed', String(Date.now()));
 // ════════════════════════════════════════════════════════════
 resetCar();
 trackOverlay || initTrackOverlay();
+initBridgeGroup();
 roadExtend(pos.x,pos.z);
 updateChunks(pos.x,pos.z);   // queue nearby chunks
 // Build only the center chunk synchronously so terrain is visible immediately
