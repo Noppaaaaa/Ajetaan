@@ -98,8 +98,10 @@ document.getElementById('name-input').addEventListener('keydown',function(e){if(
 }}
 </script>
 <script>
-// Store server URL so game.js can find the model files
-window.__CAR_URL = window.location.origin + '/auto/car.obj';
+// Store server URL so game.js can find the model files.
+// Resolved relative to the page so it also works on GitHub Pages,
+// where the site lives under a /Ajetaan/ subpath (origin+'/auto/…' 404s there).
+window.__CAR_URL = new URL('auto/car.obj', window.location.href).href;
 </script>
 <script type="module" src="game.js"></script>
 </body>

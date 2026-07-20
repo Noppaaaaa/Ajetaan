@@ -39,7 +39,7 @@ const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
 const GRAVITY      = 9.81;
 const CAR_MASS     = 2000;
-const ENGINE_MAX_TORQUE = 280;
+const ENGINE_MAX_TORQUE = 430;   // Nm — riittää 2000 kg autolle mäissä
 const REDLINE_RPM  = 7000;
 const IDLE_RPM     = 900;
 const GEAR_RATIOS  = [0, 3.5, 2.1, 1.4, 1.0, 0.75];
@@ -202,7 +202,9 @@ function roadPush(){
     const nat = naturalHeight(rGenX, rGenZ);
     const target = Math.max(SEA+1.1, nat);         // keep road just above water
     if(rGenI===0) rGenH = target;
-    rGenH += (target - rGenH) * 0.25;              // terrain follow
+    // terrain follow, but never steeper than ~9 % so the car can always climb
+    const maxDh = ROAD_STEP * 0.09;
+    rGenH += clamp((target - rGenH) * 0.25, -maxDh, maxDh);
     roadWP.push({ x:rGenX, z:rGenZ, y:rGenH, a:rGenA });
     roadInsertHash(roadWP.length-1);
     rGenI++;
@@ -239,10 +241,17 @@ function roadInfo(x,z){
     return best;
 }
 // final terrain height (with road corridor blended in)
-function getHeight(x,z){
+// skipBridge=true: terrain building — over water the seabed stays untouched
+// (no earth embankment); physics/ribbon queries get the bridge deck instead
+function getHeight(x,z,skipBridge){
     const nat=naturalHeight(x,z);
     const r=roadInfo(x,z);
     if(r.d<CARVE_R){
+        if(nat < SEA-0.05){
+            // road crosses water on a bridge: hard deck edge, no carve
+            if(skipBridge) return nat;
+            return r.d<=ROAD_HALF+0.3 ? r.y : nat;
+        }
         const t = r.d<=ROAD_HALF ? 1 : 1-smoothstep(ROAD_HALF, CARVE_R, r.d);
         return mix(nat, r.y, t);
     }
@@ -727,7 +736,7 @@ function buildChunk(cx,cz,lod){
     const seg=lod===0?SEG:(lod===1?Math.ceil(SEG/2):Math.ceil(SEG/3));
     const geo=new THREE.PlaneGeometry(CHUNK,CHUNK,seg,seg); geo.rotateX(-Math.PI/2);
     const pos=geo.attributes.position.array;
-    for(let i=0;i<pos.length;i+=3) pos[i+1]=getHeight(ox+pos[i], oz+pos[i+2]);
+    for(let i=0;i<pos.length;i+=3) pos[i+1]=getHeight(ox+pos[i], oz+pos[i+2], true);
     geo.computeVertexNormals();
     const nrm=geo.attributes.normal.array;
     const col=new Float32Array(pos.length);
@@ -998,13 +1007,21 @@ function buildRibbon(a,b,halfW,yOff){
         let nxq=nx, nzq=nz;
         if(qn){ const dxq=qn.x-q.x, dzq=qn.z-q.z, lq=Math.hypot(dxq,dzq)||1;
             nxq=nx-dzq/lq; nzq=nz+dxq/lq; const ln=Math.hypot(nxq,nzq)||1; nxq/=ln; nzq/=ln; }
-        const cur=vc;
-        v.push(p.x+nxp*halfW, getHeight(p.x+nxp*halfW, p.z+nzp*halfW)+yOff, p.z+nzp*halfW);
-        v.push(p.x-nxp*halfW, getHeight(p.x-nxp*halfW, p.z-nzp*halfW)+yOff, p.z-nzp*halfW);
-        v.push(q.x+nxq*halfW, getHeight(q.x+nxq*halfW, q.z+nzq*halfW)+yOff, q.z+nzq*halfW);
-        v.push(q.x-nxq*halfW, getHeight(q.x-nxq*halfW, q.z-nzq*halfW)+yOff, q.z-nzq*halfW);
-        vc+=4;
-        idx.push(cur, cur+2, cur+1, cur+1, cur+2, cur+3);
+        // subdivide each segment at the midpoint so coarse terrain triangles
+        // can't poke through the road between waypoints
+        const mx=(p.x+q.x)/2, mz=(p.z+q.z)/2;
+        const nxm=(nxp+nxq)/2, nzm=(nzp+nzq)/2;
+        const pts=[[p.x,p.z,nxp,nzp],[mx,mz,nxm,nzm],[q.x,q.z,nxq,nzq]];
+        for(let s=0;s<2;s++){
+            const [ax,az,anx,anz]=pts[s], [bx,bz,bnx,bnz]=pts[s+1];
+            const cur=vc;
+            v.push(ax+anx*halfW, getHeight(ax+anx*halfW, az+anz*halfW)+yOff, az+anz*halfW);
+            v.push(ax-anx*halfW, getHeight(ax-anx*halfW, az-anz*halfW)+yOff, az-anz*halfW);
+            v.push(bx+bnx*halfW, getHeight(bx+bnx*halfW, bz+bnz*halfW)+yOff, bz+bnz*halfW);
+            v.push(bx-bnx*halfW, getHeight(bx-bnx*halfW, bz-bnz*halfW)+yOff, bz-bnz*halfW);
+            vc+=4;
+            idx.push(cur, cur+2, cur+1, cur+1, cur+2, cur+3);
+        }
     }
     const g=new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(v,3));
@@ -1014,12 +1031,84 @@ function buildRibbon(a,b,halfW,yOff){
 function rebuildRoad(centerIdx){
     const a=Math.max(0, centerIdx-120), b=Math.min(roadWP.length-1, centerIdx+360);
     if(b<=a) return;
-    const rg=buildRibbon(a,b,ROAD_HALF,0.06);
-    const lg=buildRibbon(a,b,0.16,0.09);
+    const rg=buildRibbon(a,b,ROAD_HALF,0.12);
+    const lg=buildRibbon(a,b,0.16,0.16);
     if(roadMesh){ scene.remove(roadMesh); roadMesh.geometry.dispose(); }
     if(lineMesh){ scene.remove(lineMesh); lineMesh.geometry.dispose(); }
     roadMesh=new THREE.Mesh(rg, roadSurfMat); roadMesh.receiveShadow=true; roadMesh.renderOrder=0; scene.add(roadMesh);
     lineMesh=new THREE.Mesh(lg, lineSurfMat); scene.add(lineMesh);
+    rebuildBridges(a,b);
+}
+
+// ── Bridges: deck skirts, red steel railings and concrete pylons wherever
+//    the road crosses open water ──
+const bridgeConcMat  = new THREE.MeshStandardMaterial({ color:0x9aa0a6, roughness:0.85, metalness:0, side:THREE.DoubleSide });
+const bridgeSteelMat = new THREE.MeshStandardMaterial({ color:0xb03a2e, roughness:0.5, metalness:0.4, side:THREE.DoubleSide });
+let bridgeGroup=null;
+function rebuildBridges(a,b){
+    if(bridgeGroup){
+        scene.remove(bridgeGroup);
+        bridgeGroup.traverse(o=>o.geometry?.dispose?.());
+        bridgeGroup=null;
+    }
+    // collect wet spans (extended one waypoint onto land at each end)
+    const spans=[]; let s=-1;
+    for(let i=a;i<=b;i++){
+        const w=roadWP[i]; if(!w) break;
+        const wet = naturalHeight(w.x,w.z) < SEA-0.05;
+        if(wet && s<0) s=i;
+        if((!wet || i===b) && s>=0){ if(i-s>=2) spans.push([Math.max(a,s-1), Math.min(b,i)]); s=-1; }
+    }
+    if(!spans.length) return;
+    const skV=[], skI=[]; let sc=0;      // concrete skirt quads
+    const raV=[], raI=[]; let rc=0;      // railing bars + posts
+    const pylons=[];
+    for(const [s0,s1] of spans){
+        for(let i=s0;i<s1;i++){
+            const p=roadWP[i], q=roadWP[i+1];
+            const dx=q.x-p.x, dz=q.z-p.z, l=Math.hypot(dx,dz)||1;
+            const nx=-dz/l, nz=dx/l;
+            const py=p.y+0.12, qy=q.y+0.12;
+            for(const side of [1,-1]){
+                const e=ROAD_HALF+0.22;
+                const px=p.x+nx*e*side, pz=p.z+nz*e*side;
+                const qx=q.x+nx*e*side, qz=q.z+nz*e*side;
+                // concrete girder skirt below deck level
+                skV.push(px,py+0.3,pz, px,py-1.1,pz, qx,qy+0.3,qz, qx,qy-1.1,qz);
+                skI.push(sc,sc+2,sc+1, sc+1,sc+2,sc+3); sc+=4;
+                // railing: top bar
+                raV.push(px,py+1.06,pz, px,py+0.9,pz, qx,qy+1.06,qz, qx,qy+0.9,qz);
+                raI.push(rc,rc+2,rc+1, rc+1,rc+2,rc+3); rc+=4;
+                // railing post at each waypoint
+                const ax=dx/l*0.05, az=dz/l*0.05;
+                raV.push(px-ax,py+1.06,pz-az, px+ax,py+1.06,pz+az, px-ax,py+0.3,pz-az, px+ax,py+0.3,pz+az);
+                raI.push(rc,rc+1,rc+2, rc+1,rc+3,rc+2); rc+=4;
+            }
+            // concrete pylon pair down to the seabed every 4th waypoint
+            if((i-s0)%4===2){
+                const bed=naturalHeight(p.x,p.z);
+                const top=p.y+0.1, h=Math.max(1.5, top-bed+1.5);
+                for(const side of [1,-1]){
+                    const cx=p.x+nx*(ROAD_HALF-1.3)*side, cz=p.z+nz*(ROAD_HALF-1.3)*side;
+                    pylons.push(new THREE.CylinderGeometry(0.45,0.62,h,8).translate(cx, top-h/2, cz));
+                }
+            }
+        }
+    }
+    bridgeGroup=new THREE.Group();
+    const mkMesh=(verts,inds,mat,shadow)=>{
+        const g=new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+        g.setIndex(inds); g.computeVertexNormals();
+        const m=new THREE.Mesh(g,mat); m.castShadow=shadow; bridgeGroup.add(m);
+    };
+    if(skV.length) mkMesh(skV,skI,bridgeConcMat,true);
+    if(raV.length) mkMesh(raV,raI,bridgeSteelMat,true);
+    if(pylons.length){
+        const pg=mergeGeometries(pylons);
+        const pm=new THREE.Mesh(pg,bridgeConcMat); pm.castShadow=true; bridgeGroup.add(pm);
+    }
+    scene.add(bridgeGroup);
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1042,9 +1131,9 @@ const bodyMat = new THREE.MeshPhysicalMaterial({ color:0x2b6cc4, metalness:0.55,
         const objLoader = new OBJLoader();
         objLoader.setMaterials(materials);
         const model = await objLoader.loadAsync(window.__CAR_URL || 'auto/car.obj');
-        // the OBJ is modelled nose towards +X — turn it so the nose points to
-        // local +Z, the forward axis the physics and wheel layout assume
-        model.rotation.y = -Math.PI/2;
+        // the OBJ is modelled nose towards -X (headlights sit at -X) — turn it
+        // so the nose points to local +Z, the forward axis the physics assume
+        model.rotation.y = Math.PI/2;
         // Center the model (it's exported offset from origin; bbox after rotation)
         const box = new THREE.Box3().setFromObject(model);
         const center = box.getCenter(new THREE.Vector3());
@@ -1155,7 +1244,7 @@ function updateTracks(dt){
 let heading = roadWP[1] ? Math.atan2(roadWP[1].x-roadWP[0].x, roadWP[1].z-roadWP[0].z) : 0;
 const pos = new THREE.Vector3(roadWP[0].x, getHeight(roadWP[0].x,roadWP[0].z), roadWP[0].z);
 let vx=0, vz=0;                       // world-space velocity
-let bodyPitch=0, bodyRoll=0, bodyY=pos.y+RIDE_H, vy=0;
+let bodyPitch=0, bodyRoll=0, bodyY=pos.y+RIDE_H, vy=0, _airborne=false;
 let gear=0, rpm=IDLE_RPM, steerVis=0, wheelSpin=0;
 let waterTime=0;   // seconds the car has spent below the water line
 let carColorHex='#2b6cc4';
@@ -1208,6 +1297,11 @@ function resetCar(){
 let camMode=0; // 0 chase, 1 near, 2 hood
 let camHeading=0;
 let _lastBlur=-1;
+// debug probe (harmless in production, used by automated tests)
+window.__dbg = () => ({ x:pos.x, y:pos.y, z:pos.z, heading, vx, vz, bodyY, gear, rpm,
+    ground: getHeight(pos.x,pos.z),
+    gF: getHeight(pos.x+Math.sin(heading)*3, pos.z+Math.cos(heading)*3),
+    canDrive:_canDrive, keys:{...keys} });
 const camPos=new THREE.Vector3().copy(camera.position);
 function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 
@@ -1217,7 +1311,7 @@ function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 function update(dt){
     if(dt>0.05)dt=0.05;
     let steer=0, throttle=0, brake=0;
-    if(keys.l)steer+=1; if(keys.r)steer-=1;
+    if(keys.l)steer-=1; if(keys.r)steer+=1;
     if(keys.f)throttle=1; if(keys.b)brake=1;
     if(Math.abs(touchSteer)>0.12)steer=touchSteer;
     if(touchAccel>0.12)throttle=touchAccel; else if(touchAccel<-0.12)brake=-touchAccel;
@@ -1236,9 +1330,11 @@ function update(dt){
     const onRoad = rinfo.d < ROAD_HALF+1.5;
     if(rinfo.i>=0) _miniRoadIdx=rinfo.i;
 
-    // ── ground contact: tire forces only exist when the wheels touch ──
-    const groundHere = getHeight(pos.x,pos.z);
-    const onGround = bodyY <= groundHere + RIDE_H + 0.35;
+    // ── ground contact: tire forces only exist when the wheels touch.
+    // Uses last frame's suspension compression — comparing bodyY against the
+    // centre-point ground here would wrongly flag "airborne" on steep slopes,
+    // where the body rides on the highest wheel ~1 m above the centre ground.
+    const onGround = !_airborne;
 
     // terrain slope under the car (sampled ±1.5 m along each axis)
     const slopeF = Math.atan2(getHeight(pos.x+F.x*1.5,pos.z+F.z*1.5) - getHeight(pos.x-F.x*1.5,pos.z-F.z*1.5), 3);
@@ -1364,6 +1460,7 @@ function update(dt){
     const targetY = supportY + RIDE_H;
     const springK = 90, dampK = 7.0;          // ~1.5 Hz spring, critical-ish damping
     const compression = targetY - bodyY;       // >0 = spring compressed
+    _airborne = compression <= -0.12;          // contact state for next frame's tire forces
     vy -= GRAVITY * dt;                        // free fall at 9.81 m/s²
     if (compression > -0.12) {                 // wheels in contact (12 cm droop travel)
         // preloaded spring: carries the car's weight at zero compression
@@ -1438,7 +1535,10 @@ function update(dt){
         rpm = IDLE_RPM + (REDLINE_RPM - IDLE_RPM) * Math.max(throttle, brake) * 0.3;
     } else {
         const wheelRps = vabs / (WHEEL_R * 2 * Math.PI);
-        const engineRpmFromSpeed = wheelRps * 60 * GEAR_RATIOS[gear] * FINAL_DRIVE;
+        let engineRpmFromSpeed = wheelRps * 60 * GEAR_RATIOS[gear] * FINAL_DRIVE;
+        // clutch slip: crawling uphill the engine revs up instead of lugging
+        // at ~700 rpm where the torque curve gives almost nothing
+        if(throttle>0) engineRpmFromSpeed = Math.max(engineRpmFromSpeed, IDLE_RPM + throttle*1800);
         if(throttle>0 && vabs<1){
             rpm += (REDLINE_RPM*0.9 - rpm) * throttle * dt * 2;
         } else {
