@@ -1644,6 +1644,7 @@ if (window.__pName) {
     applyCarColor(carColorHex);
     ownTag.textContent = playerName;
     _canDrive = true;
+    document.getElementById('loading').classList.add('hidden');
 } else if (!playerName) {
     namePrompt.classList.remove('hidden'); nameInput.focus();
     const submit = () => {
@@ -1654,6 +1655,7 @@ if (window.__pName) {
         carColorHex = window.__pColor || '#2b6cc4';
         applyCarColor(carColorHex);
         _canDrive = true;
+        document.getElementById('loading').classList.add('hidden');
     };
     nameBtn.addEventListener('click', submit);
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
