@@ -1091,7 +1091,7 @@ function resetCar(){
     pos.set(p.x, p.y, p.z);
     heading=Math.atan2(q.x-p.x, q.z-p.z);
     camHeading=heading;
-    vx=vz=0; gear=0;
+    vx=vz=0; vy=0; bodyY=p.y+RIDE_H; gear=0;
 }
 
 // ── Camera ──
@@ -1124,44 +1124,63 @@ function update(dt){
     const rinfo=roadInfo(pos.x,pos.z);
     const onRoad = rinfo.d < ROAD_HALF+1.5;
 
+    // ── ground contact: tire forces only exist when the wheels touch ──
+    const groundHere = getHeight(pos.x,pos.z);
+    const onGround = bodyY <= groundHere + RIDE_H + 0.35;
+
+    // terrain slope under the car (sampled ±1.5 m along each axis)
+    const slopeF = Math.atan2(getHeight(pos.x+F.x*1.5,pos.z+F.z*1.5) - getHeight(pos.x-F.x*1.5,pos.z-F.z*1.5), 3);
+    const slopeR = Math.atan2(getHeight(pos.x+R.x*1.5,pos.z+R.z*1.5) - getHeight(pos.x-R.x*1.5,pos.z-R.z*1.5), 3);
+
     // ── 1st gear when throttle pressed (before torque calc) ──
     if(gear===0 && throttle>0) gear=1;
     // ── engine torque ──
     let driveForce = 0;
-    if(gear>0 && throttle>0){
+    if(onGround && gear>0 && throttle>0){
         const tr = Math.max(0, 1 - ((rpm - 3500) / 3500) ** 2);
         const eTorque = ENGINE_MAX_TORQUE * tr;
         const wTorque = eTorque * throttle * GEAR_RATIOS[gear] * FINAL_DRIVE * DRIVETRAIN_EFF;
         driveForce = wTorque / WHEEL_R;
     }
-    // ── brakes ──
-    const brakeForce = brake>0 ? MAX_BRAKE_TORQUE*brake/WHEEL_R * Math.sign(vf) : 0;
+    // ── brakes (tire friction caps the usable brake force: max decel ≈ μ·g) ──
+    const mu = onRoad ? TIRE_FRICTION_ROAD : TIRE_FRICTION_OFFROAD;
+    const brakeForce = (onGround && brake>0)
+        ? Math.min(MAX_BRAKE_TORQUE*brake/WHEEL_R, mu*CAR_MASS*GRAVITY) * Math.sign(vf) : 0;
     // ── reverse ──
     let revForce = 0;
-    if(brake>0 && vf<0.3 && vf>-0.3 && gear===0) revForce = -3000/WHEEL_R * brake;
+    if(onGround && brake>0 && vf<0.3 && vf>-0.3 && gear===0) revForce = -3000/WHEEL_R * brake;
     // ── drag ──
     const dragForce = 0.5 * AIR_DENSITY * DRAG_COEF * FRONTAL_AREA * vf * Math.abs(vf);
     // ── rolling resistance ──
-    const rollForce = ROLLING_RESIST * CAR_MASS * GRAVITY * Math.sign(vf);
-    const longForce = driveForce - brakeForce + revForce - dragForce - rollForce;
+    const rollForce = onGround ? ROLLING_RESIST * CAR_MASS * GRAVITY * Math.sign(vf) : 0;
+    // gravity component along the slope (car rolls downhill, climbs slower)
+    const slopeForce = onGround ? -CAR_MASS * GRAVITY * Math.sin(slopeF) : 0;
+    const longForce = driveForce - brakeForce + revForce - dragForce - rollForce + slopeForce;
+    const vfPrev = vf;
     vf += longForce / CAR_MASS * dt;
+    // brakes stop the car — they must not push it through zero into reverse
+    if(brake>0 && gear>0 && vfPrev>0 && vf<0) vf=0;
     vf = clamp(vf, -MAX_REVERSE, MAX_SPEED);
-    if(throttle===0 && brake===0 && Math.abs(vf)<0.15) vf=0;
+    if(throttle===0 && brake===0 && Math.abs(vf)<0.15 && Math.abs(slopeF)<0.05) vf=0;
 
-    // ── lateral grip (friction circle) ──
-    const mu = onRoad ? TIRE_FRICTION_ROAD : TIRE_FRICTION_OFFROAD;
-    const maxLatForce = mu * CAR_MASS * GRAVITY;
-    const longUtil = Math.abs(longForce) / (maxLatForce + 1);
-    const latFactor = Math.max(0, 1 - longUtil*longUtil);
-    vl -= vl * clamp(maxLatForce * latFactor / (Math.abs(vl)*CAR_MASS + 1) * dt, 0, 1);
+    // ── lateral grip (friction circle) — tires grip only on the ground ──
+    if(onGround){
+        const maxLatForce = mu * CAR_MASS * GRAVITY;
+        const longUtil = Math.abs(longForce) / (maxLatForce + 1);
+        const latFactor = Math.max(0, 1 - longUtil*longUtil);
+        vl += -GRAVITY * Math.sin(slopeR) * dt;   // sideways slope pulls the car downhill
+        vl -= vl * clamp(maxLatForce * latFactor / (Math.abs(vl)*CAR_MASS + 1) * dt, 0, 1);
+    }
 
-    // ── steering ──
+    // ── steering (front wheels can only turn the car while touching the ground) ──
     const steerAngle = steer * MAX_STEER_ANGLE * (1 - clamp(Math.abs(vf)/25, 0, 0.7));
-    const dir = vf >= 0 ? 1 : -1;
-    if(Math.abs(vf) > 1){
-        heading += Math.tan(steerAngle) * vf / WHEELBASE * dt;
-    } else {
-        heading += steerAngle * 3 * dir * dt;
+    if(onGround){
+        const dir = vf >= 0 ? 1 : -1;
+        if(Math.abs(vf) > 1){
+            heading += Math.tan(steerAngle) * vf / WHEELBASE * dt;
+        } else {
+            heading += steerAngle * 3 * dir * dt;
+        }
     }
 
     // recompose velocity from (possibly rotated) basis
@@ -1228,22 +1247,21 @@ function update(dt){
     // dynamic lean from accel/brake and cornering
     const accelLean = (throttle>0?-0.5:0)+(brake>0? (vf>0?0.6:0):0);
     const corner = -clamp(vl/12,-1,1)*0.5;
-    // ── vertical physics (spring + gravity) ──
+    // ── vertical physics: gravity always, suspension only in wheel contact ──
     const targetY = supportY + RIDE_H;
-    const springK = 60, dampK = 5.0, grav = GRAVITY;
-    // spring works both ways — pulls down when extended, pushes up when compressed
-    vy += springK * (targetY - bodyY) * dt;
-    vy -= vy * dampK * dt;
-    if (bodyY <= supportY && vy < 0) {
-        vy = -vy * 0.2;
-        bodyY = supportY;
+    const springK = 90, dampK = 7.0;          // ~1.5 Hz spring, critical-ish damping
+    const compression = targetY - bodyY;       // >0 = spring compressed
+    vy -= GRAVITY * dt;                        // free fall at 9.81 m/s²
+    if (compression > -0.12) {                 // wheels in contact (12 cm droop travel)
+        // preloaded spring: carries the car's weight at zero compression
+        vy += (GRAVITY + springK * compression) * dt;
+        vy -= vy * dampK * dt;
     }
-    vy -= grav * dt;
     bodyY += vy * dt;
-    // final safety clamp — never below any ground sample
+    // hard floor — never below any ground sample; small energy loss on impact
     if (bodyY < supportY) {
         bodyY = supportY;
-        vy = 0;
+        if (vy < 0) vy = -vy * 0.15;
     }
     bodyPitch += (tgtPitch*0.7 + accelLean*0.06 - bodyPitch)*Math.min(1,8*dt);
     bodyRoll  += (tgtRoll*0.7 + corner - bodyRoll)*Math.min(1,8*dt);
@@ -1377,7 +1395,7 @@ function update(dt){
 }
 
 function updateCamera(dt, vabs, F){
-    camHeading += (heading - camHeading) * Math.min(1, 4*dt);
+    camHeading += (heading - camHeading) * Math.min(1, 8*dt);
     const cf = {x:Math.sin(camHeading), z:Math.cos(camHeading)};
     let dist, height, look;
     if(camMode===0){ dist=8.5+vabs/MAX_SPEED*3.5; height=3.4+vabs/MAX_SPEED*0.8; look=9; }
@@ -1385,9 +1403,10 @@ function updateCamera(dt, vabs, F){
     else { dist=-0.2; height=1.35; look=12; }   // hood cam
     const tx=pos.x - cf.x*dist, tz=pos.z - cf.z*dist;
     const ty=(camMode===2? bodyY+height : Math.max(getHeight(tx,tz)+1.2, bodyY+height));
-    const target=new THREE.Vector3(tx,ty,tz);
-    const lerp = camMode===2 ? 1 : Math.min(1,(3+vabs/MAX_SPEED*2.5)*dt);
-    camPos.lerp(target, lerp);
+    // rigid horizontal follow — the camera can never trail away from behind the car;
+    // only the smoothed camHeading gives it a natural swing in corners
+    camPos.x = tx; camPos.z = tz;
+    camPos.y += (ty - camPos.y) * (camMode===2 ? 1 : Math.min(1, 10*dt));
     if(camMode!==2){
         const minY=getHeight(camPos.x,camPos.z)+1.0; if(camPos.y<minY)camPos.y=minY;
     }
