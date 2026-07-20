@@ -19,11 +19,11 @@ let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
 let   _chunksPerFrame = 4;    // chunks built per frame (mutable via settings)
 let   _colFrame = 0;
 let   _canDrive = false;     // true after name prompt submitted
-const ROAD_STEP    = 8;       // spacing between road waypoints
+const ROAD_STEP    = 6;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
 const CARVE_R      = 25;       // terrain smoothing radius around road
 const RCELL        = 24;       // road spatial-hash cell size
-const LOD_R        = 15;       // chunks within this radius get full quality
+const LOD_R        = 10;       // chunks within this radius get full quality
 const FAR_LOD_R    = 20;       // chunks beyond this get bare terrain only (no vegetation)
 
 // Car / physics
