@@ -19,9 +19,9 @@ let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
 let   _chunksPerFrame = 4;    // chunks built per frame (mutable via settings)
 let   _colFrame = 0;
 let   _canDrive = false;     // true after name prompt submitted
-const ROAD_STEP    = 12;       // spacing between road waypoints
+const ROAD_STEP    = 8;       // spacing between road waypoints
 const ROAD_HALF    = 5.6;      // road half width (flat part)
-const CARVE_R      = 30;       // terrain smoothing radius around road
+const CARVE_R      = 25;       // terrain smoothing radius around road
 const RCELL        = 24;       // road spatial-hash cell size
 const LOD_R        = 15;       // chunks within this radius get full quality
 const FAR_LOD_R    = 20;       // chunks beyond this get bare terrain only (no vegetation)
@@ -1125,8 +1125,8 @@ function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 function update(dt){
     if(dt>0.05)dt=0.05;
     let steer=0, throttle=0, brake=0;
-    if(keys.l)steer-=1; if(keys.r)steer+=1;
-    if(keys.f)throttle=1; if(keys.b)brake=1;
+    if(keys.l)steer=1; if(keys.r)steer+=1;
+    if(keys.f)throttle-=1; if(keys.b)brake=1;
     if(Math.abs(touchSteer)>0.12)steer=touchSteer;
     if(touchAccel>0.12)throttle=touchAccel; else if(touchAccel<-0.12)brake=-touchAccel;
     const hb=keys.hb;
