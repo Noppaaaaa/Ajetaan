@@ -12,7 +12,7 @@ let _soloApplied = false;
 // ════════════════════════════════════════════════════════════
 
 // ── Tunables ──
-const SEA          = 15;       // sea level (y)
+const SEA          = 23;       // sea level (y)
 const CHUNK        = 20;       // world units per terrain chunk (2× car length)
 const SEG          = 8;        // terrain grid resolution per chunk (finer = less clipping)
 let   VIEW_R       = 30;       // chunk view radius (mutable via settings)
@@ -242,8 +242,10 @@ function getHeight(x,z){
     const nat=naturalHeight(x,z);
     const r=roadInfo(x,z);
     if(r.d<CARVE_R){
-        const t = r.d<=ROAD_HALF ? 1 : 1-smoothstep(ROAD_HALF, CARVE_R, r.d);
-        return mix(nat, r.y, t);
+        if (r.d <= ROAD_HALF) return r.y;
+        const t = 1-smoothstep(ROAD_HALF, CARVE_R, r.d);
+        const h = mix(nat, r.y, t);
+        return nat < SEA ? Math.min(h, SEA) : h;
     }
     return nat;
 }
@@ -907,10 +909,10 @@ function buildRibbon(a,b,halfW,yOff){
         if(qn){ const dxq=qn.x-q.x, dzq=qn.z-q.z, lq=Math.hypot(dxq,dzq)||1;
             nxq=nx-dzq/lq; nzq=nz+dxq/lq; const ln=Math.hypot(nxq,nzq)||1; nxq/=ln; nzq/=ln; }
         const cur=vc;
-        v.push(p.x+nxp*halfW, getHeight(p.x+nxp*halfW, p.z+nzp*halfW)+yOff, p.z+nzp*halfW);
-        v.push(p.x-nxp*halfW, getHeight(p.x-nxp*halfW, p.z-nzp*halfW)+yOff, p.z-nzp*halfW);
-        v.push(q.x+nxq*halfW, getHeight(q.x+nxq*halfW, q.z+nzq*halfW)+yOff, q.z+nzq*halfW);
-        v.push(q.x-nxq*halfW, getHeight(q.x-nxq*halfW, q.z-nzq*halfW)+yOff, q.z-nzq*halfW);
+        v.push(p.x+nxp*halfW, p.y+yOff, p.z+nzp*halfW);
+        v.push(p.x-nxp*halfW, p.y+yOff, p.z-nzp*halfW);
+        v.push(q.x+nxq*halfW, q.y+yOff, q.z+nzq*halfW);
+        v.push(q.x-nxq*halfW, q.y+yOff, q.z-nzq*halfW);
         vc+=4;
         idx.push(cur, cur+2, cur+1, cur+1, cur+2, cur+3);
     }
