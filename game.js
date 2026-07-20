@@ -56,7 +56,7 @@ const MAX_BRAKE_TORQUE = 8000;
 
 // ── World regeneration (1-hour epoch + first-player-gets-fresh-world) ──
 const WORLD_MS = 3600000;
-let worldSeed = Math.floor(Date.now() / WORLD_MS);
+let worldSeed = Math.floor(Date.now() / WORLD_MS)+1;
 let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
 let _seenPeer = false;    // onko peer-viestiä koskaan tullut tässä istunnossa
 
