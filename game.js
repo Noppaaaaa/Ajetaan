@@ -345,7 +345,9 @@ const MotionBlurShader = {
     uniform vec3 uFlashCol;
     varying vec2 vUv;
 
-    const int SAMPLES = 12;
+    // raised with the smear length: at these strengths 12 taps left visible
+    // stair-stepping in the streaks
+    const int SAMPLES = 20;
 
     void main(){
         vec2 d = vUv - uCenter;
@@ -355,13 +357,17 @@ const MotionBlurShader = {
 
         // nothing happens in the sharp middle; the falloff is quadratic so the
         // transition into the smear is smooth rather than a visible ring
-        float falloff = smoothstep(0.12, 0.95, r);
-        float amt = uStrength * falloff * falloff * 0.115;
+        float falloff = smoothstep(0.05, 0.78, r);
+        float amt = uStrength * falloff * falloff * 0.20;
+
+        // per-pixel jitter of the tap positions: turns the banding that a long
+        // smear would otherwise show into fine noise, which the eye ignores
+        float dither = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
 
         vec3 col = vec3(0.0);
         float wsum = 0.0;
         for(int i = 0; i < SAMPLES; i++){
-            float t = float(i) / float(SAMPLES - 1);
+            float t = (float(i) + dither) / float(SAMPLES);
             // weight the near taps higher: keeps the image from washing out
             float w = 1.0 - t * 0.72;
             vec2 uv = vUv - d * t * amt;
@@ -371,7 +377,7 @@ const MotionBlurShader = {
         col /= wsum;
 
         // chromatic aberration on the outer edge — subtle, only at real speed
-        float ca = uStrength * falloff * 0.0032;
+        float ca = uStrength * falloff * 0.0055;
         if(ca > 0.0002){
             col.r = texture2D(tDiffuse, vUv - d * ca).r;
             col.b = texture2D(tDiffuse, vUv + d * ca).b;
@@ -1346,7 +1352,12 @@ function rebuildRoad(centerIdx){
 const bridgeConcMat  = new THREE.MeshStandardMaterial({ color:0x9aa0a6, roughness:0.85, metalness:0, side:THREE.DoubleSide });
 const bridgeSteelMat = new THREE.MeshStandardMaterial({ color:0xb03a2e, roughness:0.5, metalness:0.4, side:THREE.DoubleSide });
 let bridgeGroup=null;
+// Railing collision segments, packed flat as [ax,az,bx,bz,deckY] per railing
+// piece. Derived from the exact same offset the railing mesh is built at, so
+// the invisible wall can never drift away from the visible one.
+const railSegs=[];
 function rebuildBridges(a,b){
+    railSegs.length=0;
     if(bridgeGroup){
         scene.remove(bridgeGroup);
         bridgeGroup.traverse(o=>o.geometry?.dispose?.());
@@ -1377,6 +1388,7 @@ function rebuildBridges(a,b){
                 // concrete girder skirt below deck level
                 skV.push(px,py+0.3,pz, px,py-1.1,pz, qx,qy+0.3,qz, qx,qy-1.1,qz);
                 skI.push(sc,sc+2,sc+1, sc+1,sc+2,sc+3); sc+=4;
+                railSegs.push(px,pz,qx,qz,py);
                 // railing: top bar
                 raV.push(px,py+1.06,pz, px,py+0.9,pz, qx,qy+1.06,qz, qx,qy+0.9,qz);
                 raI.push(rc,rc+2,rc+1, rc+1,rc+2,rc+3); rc+=4;
@@ -1410,6 +1422,72 @@ function rebuildBridges(a,b){
         const pm=new THREE.Mesh(pg,bridgeConcMat); pm.castShadow=true; bridgeGroup.add(pm);
     }
     scene.add(bridgeGroup);
+}
+
+// ── bridge railing collision ──
+// The car is approximated by two circles sitting on the axles rather than one
+// circle on the centre: a single circle wide enough to cover the car's length
+// would stop it a car's length short of the railing, and one narrow enough to
+// feel right would let the nose swing straight through in a spin.
+const RAIL_PROBE_R = 1.0;    // ≈ half the car's width (1.86 m)
+const RAIL_PROBE_D = 1.1;    // probe offset fore/aft → capsule ≈ 4.2 m ≈ car length
+// Two-part test, because a pure push-out is not enough here. At top speed the
+// car covers ~2.2 m in a single frame, more than twice the probe radius, so it
+// would step clean over a 1 m collision band and land on the far side with
+// nothing ever detecting a hit. Pass 1 catches that by testing the path the car
+// travelled this frame against the railing; pass 2 handles resting contact and
+// sliding along the barrier once the car is already up against it.
+function collideRails(F, prevX, prevZ){
+    if(!railSegs.length) return;
+    const mx=(pos.x+prevX)*0.5, mz=(pos.z+prevZ)*0.5;
+    // the swept path is at most ~2.5 m, the segment 4 m, the probe 1 m: 8 m
+    // around the midpoint of the move covers every segment that could be hit
+    for(let s=0;s<railSegs.length;s+=5){
+        // no invisible walls when passing underneath the bridge
+        if(Math.abs(bodyY - railSegs[s+4]) > 2.6) continue;
+        const ax=railSegs[s], az=railSegs[s+1], bx=railSegs[s+2], bz=railSegs[s+3];
+        const cdx=mx-(ax+bx)*0.5, cdz=mz-(az+bz)*0.5;
+        if(cdx*cdx+cdz*cdz > 81) continue;
+        const ex=bx-ax, ez=bz-az;
+        const len2=ex*ex+ez*ez||1;
+
+        // ── pass 1: did this frame's movement cross the railing? ──
+        const rx=pos.x-prevX, rz=pos.z-prevZ;
+        const den=rx*ez-rz*ex;
+        if(Math.abs(den)>1e-9){
+            const t=((ax-prevX)*ez-(az-prevZ)*ex)/den;
+            const u=((ax-prevX)*rz-(az-prevZ)*rx)/den;
+            // u is padded by the probe radius so a crossing near the very end
+            // of one segment is still caught rather than slipping past the join
+            const pad=RAIL_PROBE_R/Math.sqrt(len2);
+            if(t>=0 && t<=1 && u>=-pad && u<=1+pad){
+                let nx=-ez, nz=ex;
+                const nl=Math.sqrt(nx*nx+nz*nz)||1; nx/=nl; nz/=nl;
+                // point the normal back the way the car came from
+                if(nx*rx+nz*rz > 0){ nx=-nx; nz=-nz; }
+                pos.x=prevX+rx*t+nx*RAIL_PROBE_R;
+                pos.z=prevZ+rz*t+nz*RAIL_PROBE_R;
+                const vdot=vx*nx+vz*nz;
+                if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; }
+                playCollision();
+                continue;
+            }
+        }
+
+        // ── pass 2: resting contact / sliding along the barrier ──
+        for(let k=-1;k<=1;k+=2){
+            const cx=pos.x+F.x*RAIL_PROBE_D*k, cz=pos.z+F.z*RAIL_PROBE_D*k;
+            let t=((cx-ax)*ex+(cz-az)*ez)/len2; t=clamp(t,0,1);
+            const dx=cx-(ax+ex*t), dz=cz-(az+ez*t);
+            const d=Math.sqrt(dx*dx+dz*dz);
+            if(d>=RAIL_PROBE_R || d<1e-5) continue;
+            const nx=dx/d, nz=dz/d;
+            const push=RAIL_PROBE_R-d;
+            pos.x+=nx*push; pos.z+=nz*push;
+            const vdot=vx*nx+vz*nz;
+            if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; playCollision(); }
+        }
+    }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1936,6 +2014,7 @@ function update(dt){
     const R2={x:Math.cos(heading), z:-Math.sin(heading)};
     vx = F2.x*vf + R2.x*vl;
     vz = F2.z*vf + R2.z*vl;
+    const _prevX=pos.x, _prevZ=pos.z;   // swept railing test needs the old position
     pos.x += vx*dt; pos.z += vz*dt;
 
     // ── peer collision ──
@@ -1963,6 +2042,9 @@ function update(dt){
                 const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; playCollision(); } }
         }
     }
+
+    // ── bridge railings (every frame, and swept: see collideRails) ──
+    collideRails(F2, _prevX, _prevZ);
 
     // ── suspension: sample ground under each wheel ──
     let sum=0, fr=0, re=0, lf=0, ri=0, supportY=-1e9;
@@ -2213,7 +2295,7 @@ function updateCamera(dt, vabs, F){
     // tuned against the usable band: a hint of smear from ~60 km/h, full effect
     // well before the theoretical top speed
     const sp = clamp(vabs/MAX_SPEED, 0, 1);
-    const target = clamp(smoothstep(0.05, 0.75, sp) * (0.55 + sp*0.6), 0, 1.2);
+    const target = clamp(smoothstep(0.04, 0.62, sp) * (0.7 + sp*0.85), 0, 1.5);
     _blurAmt += (target-_blurAmt) * Math.min(1, 5*dt);
     blurU.uStrength.value = _blurAmt < 0.008 ? 0 : _blurAmt;
     // blur origin leads the turn: in a corner the smear pivots around the apex
