@@ -249,12 +249,14 @@ function roadPush(){
 // the terrain, the physics, the suspension and the wheel raycasts all see the
 // same surface for free. The visible strip is then drawn just above it exactly
 // the way the road ribbon is drawn above the carved road corridor.
-const RAMP_EVERY   = 70;    // waypoints between ramps (~280 m)
-const RAMP_APPROACH= 34;    // run-up length before the kicker starts
-const RAMP_KICK    = 17;    // length of the rising part
-const RAMP_H       = 4.2;   // launch height at the lip
-const RAMP_HALF    = 4.2;   // half width of the drivable strip
-const RAMP_FEATHER = 3.0;   // lateral blend from strip edge into terrain
+// Rare and large rather than frequent and small: one every ~2.8 km, so finding
+// one is an event, and big enough to be worth the detour when you do.
+const RAMP_EVERY   = 700;   // waypoints between ramps (~2800 m)
+const RAMP_APPROACH= 55;    // run-up length before the kicker starts
+const RAMP_KICK    = 28;    // length of the rising part
+const RAMP_H       = 8.0;   // launch height at the lip
+const RAMP_HALF    = 5.5;   // half width of the drivable strip
+const RAMP_FEATHER = 3.5;   // lateral blend from strip edge into terrain
 const RAMP_CELL    = 48;    // spatial hash cell
 const ramps = [];
 const rampHash = new Map();
@@ -1466,8 +1468,9 @@ function rebuildRamps(){
         const ddx=r.x0-pos.x, ddz=r.z0-pos.z;
         if(ddx*ddx+ddz*ddz > 1200*1200) continue;
         const total=r.L1+r.L2;
-        // denser sampling over the kicker, where the curvature lives
-        const STEPS=26;
+        // ~2 m per rung: keeps the chord error under the 0.14 m the strip is
+        // lifted by, so the terrain can never surface between two rungs
+        const STEPS=Math.ceil(total/2);
         const nx=r.dz, nz=-r.dx;          // lateral unit
         let prev=null;
         for(let s=0;s<=STEPS;s++){
@@ -1493,7 +1496,7 @@ function rebuildRamps(){
         {
             const y=rampSurfaceY(r,total)+0.14;
             const cx=r.x0+r.dx*total, cz=r.z0+r.dz*total;
-            const drop=Math.min(2.2, RAMP_H*0.55);
+            const drop=Math.min(4.0, RAMP_H*0.55);
             const cur=lc;
             lv.push(cx+nx*RAMP_HALF, y, cz+nz*RAMP_HALF);
             lv.push(cx-nx*RAMP_HALF, y, cz-nz*RAMP_HALF);
