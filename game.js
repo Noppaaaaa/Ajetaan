@@ -1252,6 +1252,7 @@ const pos = new THREE.Vector3(roadWP[0].x, getHeight(roadWP[0].x,roadWP[0].z), r
 let vx=0, vz=0;                       // world-space velocity
 let bodyPitch=0, bodyRoll=0, bodyY=pos.y+RIDE_H, vy=0, _airborne=false, _airborneTimer=0;
 let gear=0, rpm=IDLE_RPM, steerVis=0, wheelSpin=0;
+let _crashTimer=0, _prevVf=0;          // crash detection (>40 km/h in 0.5s)
 let waterTime=0;   // seconds the car has spent below the water line
 let carColorHex='#2b6cc4';
 let netTimer=0;
@@ -1330,6 +1331,19 @@ function update(dt){
     let vl = vx*R.x + vz*R.z;         // lateral (sideways) speed
     const vabs=Math.abs(vf);
     if(vabs>0.5) totalDriveM+=vabs*dt;
+
+    // crash detection — >40 km/h speed change in 0.5 s → explosion + reset
+    _crashTimer+=dt;
+    if(_crashTimer>=0.5){
+        _crashTimer-=0.5;
+        const cv=Math.abs(vf);
+        if(cv>1&&_prevVf>1&&_prevVf-cv>11.11){
+            emit(pos.x,bodyY,pos.z,150,1,0.5,0.1,3,4);
+            emit(pos.x,bodyY,pos.z,60,0.3,0.3,0.3,2,3);
+            resetCar();
+        }
+        _prevVf=cv;
+    }
 
     // road check
     const rinfo=roadInfo(pos.x,pos.z);
