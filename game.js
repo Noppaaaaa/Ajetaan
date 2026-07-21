@@ -57,11 +57,17 @@ const DRAG_COEF     = 0.35;
 const FRONTAL_AREA  = 2.2;
 const MAX_BRAKE_TORQUE = 8000;
 
-// ── World regeneration (1-hour epoch + first-player-gets-fresh-world) ──
+// ── World regeneration (fully random seed, new map every hour) ──
 const WORLD_MS = 3600000;
-let worldSeed = Math.floor(Date.now() / WORLD_MS)+1;
+// The seed used to be Math.floor(Date.now()/WORLD_MS)+1, i.e. a pure function
+// of the wall clock, so the "new" world every hour was really just the next
+// entry in one fixed sequence. Now every world is drawn at random.
+// Range is kept at ~1e6: hash2 feeds seed*1000 into Math.sin, and a much larger
+// seed would push the argument past the point where float64 still resolves
+// neighbouring lattice cells, flattening the terrain noise.
+const randomSeed = () => Math.floor(Math.random()*999999)+1;
+let worldSeed = randomSeed();
 let totalDriveM = 0;      // kumulatiivinen ajettu matka (metriä)
-let _seenPeer = false;    // onko peer-viestiä koskaan tullut tässä istunnossa
 
 // ── Persistent flatten map & tire tracks ──
 const TRACK_HALF = 256;          // world meters from canvas center
@@ -113,7 +119,8 @@ function resetTrackMaps(){
     trCtx.fillStyle='#fff'; trCtx.fillRect(0,0,TRACK_SIZE,TRACK_SIZE);
     flattenTex.needsUpdate=true; trackTex.needsUpdate=true;
 }
-let worldEpoch = worldSeed;
+// which wall-clock hour we are in — drives the countdown only, not the terrain
+let worldEpoch = Math.floor(Date.now() / WORLD_MS);
 let worldClockTimer = 0;
 const worldClockEl = document.getElementById('clock-time');
 // Initialize clock display immediately
@@ -1228,8 +1235,8 @@ function updateChunks(px,pz){
     }
 }
 
-function regenerateWorld(epoch) {
-    worldSeed = epoch;
+function regenerateWorld(seed) {
+    worldSeed = seed;
     document.getElementById('loading').classList.remove('hidden');
     // Clear all existing chunks
     for (const [k, rec] of chunks) {
@@ -1798,7 +1805,7 @@ function applyShake(dt){
 window.__dbg = () => ({ x:pos.x, y:pos.y, z:pos.z, heading, vx, vz, bodyY, gear, rpm,
     ground: getHeight(pos.x,pos.z),
     gF: getHeight(pos.x+Math.sin(heading)*3, pos.z+Math.cos(heading)*3),
-    canDrive:_canDrive, keys:{...keys},
+    canDrive:_canDrive, keys:{...keys}, seed:worldSeed,
     blur:blurU.uStrength.value, flash:blurU.uFlash.value,
     crash:_crashActive, exT, shake:_shake });
 window.__crashTest = () => startCrash();
@@ -2142,7 +2149,7 @@ function update(dt){
         const epoch = Math.floor(Date.now() / WORLD_MS);
         if (epoch !== worldEpoch) {
             worldEpoch = epoch;
-            regenerateWorld(epoch);
+            regenerateWorld(randomSeed());
         }
         const remaining = Math.max(0, (worldEpoch + 1) * WORLD_MS - Date.now());
         if (remaining <= 0) { worldClockEl.textContent = '00:00:00'; }
@@ -2368,8 +2375,7 @@ document.getElementById('show-debug').addEventListener('change', function(){
 
 // ── Uusi kartta ──
 document.getElementById('new-map-btn').addEventListener('click',()=>{
-    worldEpoch = Math.floor(Date.now() / WORLD_MS);
-    regenerateWorld(Math.floor(Math.random()*999999)+1);
+    regenerateWorld(randomSeed());
 });
 
 
@@ -2467,7 +2473,6 @@ function buildGhost(hex){
 }
 net.setHandlers(
     d=>{  // peer position update
-        _seenPeer = true;
         if(soloMode) return;
         let p=peers.get(d.id);
         if(!p){
@@ -2501,13 +2506,10 @@ function updatePeers(dt){
 // ── UI fade ──
 setTimeout(()=>{ document.getElementById('hint').classList.add('gone'); document.getElementById('title').classList.add('gone'); }, 6500);
 
-// first/lone player → fresh world (wait a bit for peer messages to arrive)
-setTimeout(() => {
-    if (!_seenPeer && peers.size === 0) {
-        worldEpoch++;
-        regenerateWorld(worldEpoch);
-    }
-}, 2000);
+// (the old "first/lone player → fresh world" rebuild lived here: it waited 2 s
+// for peer messages and then regenerated the whole world if you were alone.
+// Every session now boots on a random seed, so that rebuild only bought a
+// full-world rebuild hitch a couple of seconds into every solo game.)
 localStorage.setItem('lastPlayed', String(Date.now()));
 
 // ════════════════════════════════════════════════════════════
