@@ -132,7 +132,25 @@ const mix = (a,b,t)=>a+(b-a)*t;
 const mixC = (a,b,t)=>[mix(a[0],b[0],t),mix(a[1],b[1],t),mix(a[2],b[2],t)];
 
 // ── Value noise + fbm + domain warp ──
-function hash2(x,y){ let n=Math.sin((x+worldSeed*1000)*127.1+(y+worldSeed*1000)*311.7)*43758.5453; return n-Math.floor(n); }
+// hash2 is a pure function of the integer lattice cell (x,y). During a single
+// chunk build naturalHeight() is evaluated thousands of times inside a ~110 m
+// window, so every low-frequency noise octave keeps hitting the same handful of
+// lattice cells. A memo — active ONLY while a chunk is being built — turns those
+// ~99 % repeat calls into Map hits instead of Math.sin. Output is bit-identical.
+// Key packs (x,y) into one int; injective for |y| < 2^21 (≈2 M world units,
+// far beyond one hourly world epoch even at top speed).
+const _h2cache = new Map();
+let _h2on = false;
+function hash2(x,y){
+    if(_h2on){
+        const key = x*4194304 + y;
+        const c = _h2cache.get(key);
+        if(c!==undefined) return c;
+        let n=Math.sin((x+worldSeed*1000)*127.1+(y+worldSeed*1000)*311.7)*43758.5453;
+        n=n-Math.floor(n); _h2cache.set(key,n); return n;
+    }
+    let n=Math.sin((x+worldSeed*1000)*127.1+(y+worldSeed*1000)*311.7)*43758.5453; return n-Math.floor(n);
+}
 function vnoise(x,z){
     const ix=Math.floor(x), iz=Math.floor(z), fx=x-ix, fz=z-iz;
     const ux=fx*fx*(3-2*fx), uz=fz*fz*(3-2*fz);
@@ -184,9 +202,12 @@ const roadHash = new Map();     // "cx,cz" -> [indices]
 let   rGenX=0, rGenZ=0, rGenA=0, rGenH=0, rGenI=0;
 let   _roadBias=0;               // directional persistence bias
 
+// pack a road cell (cx,cz) into one int key — no per-lookup string allocation
+// (roadInfo does 9 lookups and runs inside every getHeight call)
+function roadCellKey(cx,cz){ return cx*4194304 + cz; }
 function roadInsertHash(i){
     const w=roadWP[i];
-    const k=Math.floor(w.x/RCELL)+','+Math.floor(w.z/RCELL);
+    const k=roadCellKey(Math.floor(w.x/RCELL), Math.floor(w.z/RCELL));
     let a=roadHash.get(k); if(!a){ a=[]; roadHash.set(k,a); }
     a.push(i);
 }
@@ -224,7 +245,7 @@ function roadInfo(x,z){
     const cx=Math.floor(x/RCELL), cz=Math.floor(z/RCELL);
     let bd=1e18, bi=-1;
     for(let dx=-1;dx<=1;dx++) for(let dz=-1;dz<=1;dz++){
-        const a=roadHash.get((cx+dx)+','+(cz+dz)); if(!a) continue;
+        const a=roadHash.get(roadCellKey(cx+dx,cz+dz)); if(!a) continue;
         for(const i of a){ const w=roadWP[i]; const d=(w.x-x)**2+(w.z-z)**2; if(d<bd){ bd=d; bi=i; } }
     }
     if(bi<0) return { d:1e9, y:0, i:-1 };
@@ -235,7 +256,7 @@ function roadInfo(x,z){
         const ex=q.x-p.x, ez=q.z-p.z; const len2=ex*ex+ez*ez||1;
         let t=((x-p.x)*ex+(z-p.z)*ez)/len2; t=clamp(t,0,1);
         const projx=p.x+ex*t, projz=p.z+ez*t;
-        const d=Math.hypot(x-projx, z-projz);
+        const _rx=x-projx, _rz=z-projz; const d=Math.sqrt(_rx*_rx+_rz*_rz);
         if(d<best.d) best={ d, y:mix(p.y,q.y,t), i:bi };
     }
     return best;
@@ -731,6 +752,7 @@ const _pendingCleanup = [];        // old meshes from LOD upgrade [{oldObjs,chec
 const collideByChunk = new Map();  // key -> [{x,z,r}]
 
 function buildChunk(cx,cz,lod){
+    _h2cache.clear(); _h2on=true;   // enable noise-lattice memo for this build only
     const ox=cx*CHUNK, oz=cz*CHUNK;
     const rec={ objs:[], lod };
 
@@ -901,6 +923,7 @@ function buildChunk(cx,cz,lod){
     } else {
         collideByChunk.set(cx+','+cz, []);
     }
+    _h2on=false;   // memo off — per-frame physics keeps computing live
     return rec;
 }
 
@@ -1208,6 +1231,7 @@ const MAXP=400;
 const pPos=new Float32Array(MAXP*3), pVel=new Float32Array(MAXP*3), pLife=new Float32Array(MAXP);
 const pColA=new Float32Array(MAXP*3);
 let pIdx=0, _exhaustT=0, _explosionBoost=0;
+let _pColDirty=false, _pLive=0;   // color buffer changes only on emit; track live count for position uploads
 const pGeo=new THREE.BufferGeometry();
 pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
 pGeo.setAttribute('color', new THREE.BufferAttribute(pColA,3));
@@ -1221,6 +1245,7 @@ function emit(x,y,z,n,r=0.74,g=0.69,b=0.59,up=1,spread=1){
         pColA[j]=r*v; pColA[j+1]=g*v; pColA[j+2]=b*v;
         pLife[pIdx]=0.5+Math.random()*0.6; pIdx=(pIdx+1)%MAXP;
     }
+    _pColDirty=true;
 }
 
 // ── tire tracks ──
@@ -1440,7 +1465,7 @@ function update(dt){
     // ── peer collision ──
     for(const [,p] of peers){
         const dx=pos.x-p.group.position.x, dz=pos.z-p.group.position.z;
-        const d=Math.hypot(dx,dz); const min=2.6;
+        const d=Math.sqrt(dx*dx+dz*dz); const min=2.6;
         if(d<min&&d>0.01){ const o=(min-d)/d; pos.x+=dx*o; pos.z+=dz*o;
             const nx=dx/d, nz=dz/d;
             const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; playCollision(); } }
@@ -1456,7 +1481,7 @@ function update(dt){
         if(!col) continue;
         for(const t of col){
             const odx=pos.x-t.x, odz=pos.z-t.z;
-            const d=Math.hypot(odx,odz); const min=t.r+colR;
+            const d=Math.sqrt(odx*odx+odz*odz); const min=t.r+colR;
             if(d<min&&d>0.01){ const o=(min-d)/d; pos.x+=odx*o; pos.z+=odz*o;
                 const nx=odx/d, nz=odz/d;
                 const vdot=vx*nx+vz*nz; if(vdot<0){ vx-=nx*vdot; vz-=nz*vdot; playCollision(); } }
@@ -1579,15 +1604,19 @@ function update(dt){
     if(groundY < SEA+0.05 && vabs>4){
         emit(pos.x + F2.x*1.6, SEA+0.25, pos.z + F2.z*1.6, 3, 0.62,0.78,0.88, 2.2, 1.4);
     }
-    for(let i=0;i<MAXP;i++){ if(pLife[i]>0){ pLife[i]-=dt; const j=i*3;
+    let _live=0;
+    for(let i=0;i<MAXP;i++){ if(pLife[i]>0){ pLife[i]-=dt; _live++; const j=i*3;
         pPos[j]+=pVel[j]*dt; pPos[j+1]+=pVel[j+1]*dt; pPos[j+2]+=pVel[j+2]*dt; pVel[j+1]-=2*dt;
     } else { pPos[i*3+1]=-999; } }
     if(_explosionBoost>0){
         _explosionBoost-=dt;
         pMat.size=1.8; pMat.opacity=1;
     } else { pMat.size=0.5; pMat.opacity=0.55; }
-    pGeo.attributes.position.needsUpdate=true;
-    pGeo.attributes.color.needsUpdate=true;
+    // upload only what changed: positions while particles live (plus the one
+    // frame they wink out), colours only on the frames emit() wrote new ones
+    if(_live>0 || _pLive>0) pGeo.attributes.position.needsUpdate=true;
+    _pLive=_live;
+    if(_pColDirty){ pGeo.attributes.color.needsUpdate=true; _pColDirty=false; }
     updateTracks(dt);
 
     // ── gears / rpm ──
