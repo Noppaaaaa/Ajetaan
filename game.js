@@ -265,7 +265,7 @@ roadInit();   // build the initial road so physics init can read roadWP[0]
 const scene = new THREE.Scene();
 const HORIZON = 0xbcd3e0;
 scene.background = new THREE.Color(HORIZON);
-scene.fog = new THREE.FogExp2(HORIZON, 0.0022);
+scene.fog = new THREE.Fog(HORIZON, 20, 600);
 
 const camera = new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.3, 4000);
 const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
@@ -1387,7 +1387,7 @@ function update(dt){
     }
 
     // ── steering (front wheels can only turn the car while touching the ground) ──
-    const steerAngle = steer * MAX_STEER_ANGLE * clamp(1 - (Math.abs(vf)*3.6 - 1) * 0.8/199, 0.2, 1);
+    const steerAngle = steer * MAX_STEER_ANGLE * clamp(1 - (Math.abs(vf)*3.6 - 1) * 0.9/199, 0.1, 1);
     if(onGround){
         const dir = vf >= 0 ? 1 : -1;
         if(Math.abs(vf) > 1){
@@ -2030,7 +2030,19 @@ function processChunkQueue(){
         if(chunks.size>=1) document.getElementById('loading').classList.add('hidden');
     }
 }
-function animate(){ requestAnimationFrame(animate); update(clock.getDelta()); renderer.render(scene,camera); processLodUpgrades(); processChunkQueue(); }
+function animate(){
+    requestAnimationFrame(animate);
+    update(clock.getDelta());
+    processLodUpgrades();
+    processChunkQueue();
+    // dynamic fog masks unloaded chunks
+    const total = (2*VIEW_R+1)**2;
+    const ratio = Math.min(chunks.size / total, 1);
+    const fogFar = CHUNK*2 + ratio * (VIEW_R*CHUNK - CHUNK*2);
+    const fogNear = fogFar * 0.5;
+    scene.fog.far = fogFar; scene.fog.near = fogNear;
+    renderer.render(scene,camera);
+}
 animate();
 
 setTimeout(()=>document.getElementById('loading').classList.add('hidden'), 400);
