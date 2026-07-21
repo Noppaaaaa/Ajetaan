@@ -2027,7 +2027,7 @@ function processChunkQueue(){
         if(_old){ for(const o of _old.objs){ scene.remove(o); o.geometry?.dispose?.(); } }
         chunks.set(bestK, buildChunk(job.x,job.z,job.lod));
         _upgrading.delete(bestK);
-        if(chunks.size>=50) document.getElementById('loading').classList.add('hidden');
+        if(chunks.size>=1) document.getElementById('loading').classList.add('hidden');
     }
 }
 function animate(){ requestAnimationFrame(animate); update(clock.getDelta()); renderer.render(scene,camera); processLodUpgrades(); processChunkQueue(); }
