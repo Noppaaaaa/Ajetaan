@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import * as net from './net.js';
 
 let playerName = '';
@@ -300,6 +303,84 @@ renderer.toneMappingExposure = 1.05;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.prepend(renderer.domElement);
 
+// ════════════════════════════════════════════════════════════
+//  POST-PROCESSING — radial velocity blur + crash flash
+// ════════════════════════════════════════════════════════════
+// Replaces the old uniform CSS blur(): the screen centre (where you are
+// looking) stays razor sharp and only the periphery smears outward along the
+// direction of travel, which is what actually reads as speed. The blur centre
+// drifts with steering so corners smear into the apex. Costs one extra
+// fullscreen pass, and the whole composer is bypassed when standing still.
+const MotionBlurShader = {
+    uniforms: {
+        tDiffuse:  { value: null },
+        uStrength: { value: 0 },                            // 0..1 speed factor
+        uCenter:   { value: new THREE.Vector2(0.5, 0.5) },  // blur origin (steer-shifted)
+        uAspect:   { value: 1 },
+        uFlash:    { value: 0 },                            // 0..1 explosion whiteout
+        uFlashCol: { value: new THREE.Color(1.0, 0.72, 0.32) }
+    },
+    vertexShader: `
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uStrength, uAspect, uFlash;
+    uniform vec2 uCenter;
+    uniform vec3 uFlashCol;
+    varying vec2 vUv;
+
+    const int SAMPLES = 12;
+
+    void main(){
+        vec2 d = vUv - uCenter;
+        d.x *= uAspect;
+        float r = length(d);
+        d.x /= uAspect;
+
+        // nothing happens in the sharp middle; the falloff is quadratic so the
+        // transition into the smear is smooth rather than a visible ring
+        float falloff = smoothstep(0.12, 0.95, r);
+        float amt = uStrength * falloff * falloff * 0.115;
+
+        vec3 col = vec3(0.0);
+        float wsum = 0.0;
+        for(int i = 0; i < SAMPLES; i++){
+            float t = float(i) / float(SAMPLES - 1);
+            // weight the near taps higher: keeps the image from washing out
+            float w = 1.0 - t * 0.72;
+            vec2 uv = vUv - d * t * amt;
+            col += texture2D(tDiffuse, uv).rgb * w;
+            wsum += w;
+        }
+        col /= wsum;
+
+        // chromatic aberration on the outer edge — subtle, only at real speed
+        float ca = uStrength * falloff * 0.0032;
+        if(ca > 0.0002){
+            col.r = texture2D(tDiffuse, vUv - d * ca).r;
+            col.b = texture2D(tDiffuse, vUv + d * ca).b;
+        }
+
+        // speed vignette: the periphery darkens slightly as the tunnel narrows
+        col *= 1.0 - uStrength * falloff * 0.22;
+
+        // crash whiteout
+        col = mix(col, uFlashCol, uFlash);
+
+        gl_FragColor = vec4(col, 1.0);
+    }`
+};
+const composer = new EffectComposer(renderer);
+composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+composer.setSize(innerWidth, innerHeight);
+composer.addPass(new RenderPass(scene, camera));
+const blurPass = new ShaderPass(MotionBlurShader);
+blurPass.renderToScreen = true;
+composer.addPass(blurPass);
+const blurU = blurPass.uniforms;
+blurU.uAspect.value = innerWidth / innerHeight;
+
 // ── Lighting ──
 const sunDir = new THREE.Vector3(0.55, 0.68, 0.48).normalize();
 const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x55613f, 0.75); scene.add(hemi);
@@ -532,8 +613,11 @@ const lodRockGeo = new THREE.BoxGeometry(1.4,1.0,1.6);
 
 // ── Audio (Web Audio API, procedural) ──
 let audioCtx = null;
-let engineMain, engineHarm, engineSub, engineGain, engineFilter;
-let exhaustGain, exhaustFilter;
+let engineMain, engineHarm, engineSub, engineWhine, engineGain, engineFilter;
+let gMain, gHarm, gSub, gWhine, engineBody, lumpOsc, lumpGain;
+let burbleFilter, burbleGain, _burbleT = 0;
+let _audioGear = 0, _shiftCut = 0;
+let exhaustGain, exhaustFilter, exhaustFilter2, exhaustGain2;
 let windGain, windFilter, roadGain, roadFilter, skidGain;
 let waterNoiseSrc, waterGain, waterFilter, waterLFO;
 let _collisionCD = 0;
@@ -549,29 +633,86 @@ function initAudio() {
     comp.connect(audioCtx.destination);
     const master = comp;
 
-    // engine: saw + detuned square + half-frequency sub for body
-    engineMain = audioCtx.createOscillator();
-    engineMain.type = 'sawtooth';
-    engineHarm = audioCtx.createOscillator();
-    engineHarm.type = 'square';
-    engineSub = audioCtx.createOscillator();
-    engineSub.type = 'sawtooth';
+    // ── engine ──
+    // Modelled on the firing frequency of a six, not on "a saw wave that goes
+    // up": f = rpm/60 * cylinders/2. A custom PeriodicWave supplies the whole
+    // harmonic stack in one oscillator (far richer than saw+square), a second
+    // detuned copy gives the beating you hear from cylinders that never fire
+    // perfectly evenly, and a soft-clipper adds the rasp that made the old
+    // version sound like a vacuum cleaner when it was missing.
+    const NH = 18;
+    const wr = new Float32Array(NH), wi = new Float32Array(NH);
+    for (let n = 1; n < NH; n++) {
+        // 1/n rolloff with the 2nd and 4th orders pushed up — that emphasis is
+        // most of what makes a note read as "engine" instead of "buzzer"
+        let a = 1 / n;
+        if (n === 2) a *= 1.7; else if (n === 4) a *= 1.35; else if (n === 3) a *= 0.8;
+        if (n > 8) a *= 0.55;
+        wi[n] = a;
+        wr[n] = a * 0.25 * Math.sin(n * 1.7);   // phase scatter → less "reedy"
+    }
+    const engineWave = audioCtx.createPeriodicWave(wr, wi, { disableNormalization: false });
+
+    const mkOsc = (type, wave) => {
+        const o = audioCtx.createOscillator();
+        if (wave) o.setPeriodicWave(wave); else o.type = type;
+        return o;
+    };
+    engineMain  = mkOsc(null, engineWave);
+    engineHarm  = mkOsc(null, engineWave); engineHarm.detune.value = 11;   // beating
+    engineSub   = mkOsc('triangle');                                       // half-order thump
+    engineWhine = mkOsc('sawtooth');                                       // intake/gear whine
+
+    gMain  = audioCtx.createGain(); gMain.gain.value  = 0.6;
+    gHarm  = audioCtx.createGain(); gHarm.gain.value  = 0.38;
+    gSub   = audioCtx.createGain(); gSub.gain.value   = 0.5;
+    gWhine = audioCtx.createGain(); gWhine.gain.value = 0;
+
+    // soft clip: gentle at low level, compresses hard when the engine is loud,
+    // so the timbre itself gets angrier as you open the throttle
+    const shaper = audioCtx.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) {
+        const x = (i / 1023) * 2 - 1;
+        curve[i] = Math.tanh(x * 2.2) / Math.tanh(2.2);
+    }
+    shaper.curve = curve; shaper.oversample = '2x';
+
+    // exhaust-pipe resonance: a fixed low formant gives the sound a body
+    engineBody = audioCtx.createBiquadFilter();
+    engineBody.type = 'peaking'; engineBody.frequency.value = 105;
+    engineBody.Q.value = 1.1; engineBody.gain.value = 9;
+
     engineFilter = audioCtx.createBiquadFilter();
     engineFilter.type = 'lowpass';
-    engineFilter.frequency.value = 300;
+    engineFilter.frequency.value = 400;
+    engineFilter.Q.value = 1.4;          // slight resonance at the cutoff
+
     engineGain = audioCtx.createGain();
     engineGain.gain.value = 0;
-    engineMain.connect(engineFilter);
-    engineHarm.connect(engineFilter);
-    engineSub.connect(engineFilter);
+
+    engineMain.connect(gMain);   gMain.connect(shaper);
+    engineHarm.connect(gHarm);   gHarm.connect(shaper);
+    engineSub.connect(gSub);     gSub.connect(shaper);
+    engineWhine.connect(gWhine); gWhine.connect(shaper);
+    shaper.connect(engineBody);
+    engineBody.connect(engineFilter);
     engineFilter.connect(engineGain);
     engineGain.connect(master);
+
+    // amplitude lump at half the firing rate: an idle that breathes unevenly
+    // instead of sitting on one dead steady tone
+    lumpOsc = audioCtx.createOscillator(); lumpOsc.type = 'sine';
+    lumpGain = audioCtx.createGain(); lumpGain.gain.value = 0;
+    lumpOsc.connect(lumpGain); lumpGain.connect(engineGain.gain);
+    lumpOsc.frequency.value = 25;
+
     engineMain.frequency.value = 50;
-    engineHarm.frequency.value = 100;
+    engineHarm.frequency.value = 50;
     engineSub.frequency.value = 25;
-    engineMain.start();
-    engineHarm.start();
-    engineSub.start();
+    engineWhine.frequency.value = 200;
+    engineMain.start(); engineHarm.start(); engineSub.start(); engineWhine.start();
+    lumpOsc.start();
 
     // one shared looping noise buffer feeds every noise layer
     const bufLen = Math.floor(audioCtx.sampleRate * 1.0);
@@ -585,11 +726,23 @@ function initAudio() {
         return s;
     };
 
-    // exhaust rumble: bandpassed noise that follows rpm under throttle
+    // exhaust rumble: two bandpassed noise layers — a low chesty one and a
+    // higher raspy one that only comes in under load
     exhaustFilter = audioCtx.createBiquadFilter();
-    exhaustFilter.type = 'bandpass'; exhaustFilter.frequency.value = 120; exhaustFilter.Q.value = 1.2;
+    exhaustFilter.type = 'bandpass'; exhaustFilter.frequency.value = 120; exhaustFilter.Q.value = 1.6;
     exhaustGain = audioCtx.createGain(); exhaustGain.gain.value = 0;
     noiseSrc(exhaustFilter); exhaustFilter.connect(exhaustGain); exhaustGain.connect(master);
+
+    exhaustFilter2 = audioCtx.createBiquadFilter();
+    exhaustFilter2.type = 'bandpass'; exhaustFilter2.frequency.value = 700; exhaustFilter2.Q.value = 0.9;
+    exhaustGain2 = audioCtx.createGain(); exhaustGain2.gain.value = 0;
+    noiseSrc(exhaustFilter2); exhaustFilter2.connect(exhaustGain2); exhaustGain2.connect(master);
+
+    // overrun burble: short crackles fired off when you lift at high rpm
+    burbleFilter = audioCtx.createBiquadFilter();
+    burbleFilter.type = 'bandpass'; burbleFilter.frequency.value = 260; burbleFilter.Q.value = 3;
+    burbleGain = audioCtx.createGain(); burbleGain.gain.value = 0;
+    noiseSrc(burbleFilter); burbleFilter.connect(burbleGain); burbleGain.connect(master);
 
     // wind hiss: grows with speed squared
     windFilter = audioCtx.createBiquadFilter();
@@ -628,20 +781,60 @@ function initAudio() {
     waterLFO.start();
 }
 
-function updateAudio(rpm, throttle, speed, onRoad, slide, hb) {
+function updateAudio(rpm, throttle, speed, onRoad, slide, hb, dt = 0.016) {
     if (!audioCtx) return;
     const t = audioCtx.currentTime;
     const r = rpm / REDLINE_RPM;
-    const freq = 40 + r * 130;
-    engineMain.frequency.linearRampToValueAtTime(freq, t + 0.08);
-    engineHarm.frequency.linearRampToValueAtTime(freq * 2.02, t + 0.08);
-    engineSub.frequency.linearRampToValueAtTime(freq * 0.5, t + 0.08);
-    engineFilter.frequency.linearRampToValueAtTime(200 + r * 900, t + 0.08);
-    const vol = Math.max(0.005, throttle * 0.16 + r * 0.05);
-    engineGain.gain.linearRampToValueAtTime(vol, t + 0.08);
+
+    // firing frequency of a six: rpm/60 × 6/2. 1000 rpm ≈ 50 Hz, 8000 ≈ 400 Hz —
+    // a real rev range instead of the old 40→170 Hz that topped out too low to
+    // ever sound like it was working hard.
+    const f = Math.max(28, rpm / 20);
+    const glide = t + 0.05;      // short glide: revs track the throttle crisply
+    engineMain.frequency.linearRampToValueAtTime(f, glide);
+    engineHarm.frequency.linearRampToValueAtTime(f, glide);
+    engineSub.frequency.linearRampToValueAtTime(f * 0.5, glide);
+    engineWhine.frequency.linearRampToValueAtTime(f * 4, glide);
+    lumpOsc.frequency.linearRampToValueAtTime(f * 0.5, glide);
+
+    // gearshift cut: a brief drop in level where the clutch would come out
+    if (gear !== _audioGear) { if (_audioGear > 0 && gear > 0) _shiftCut = 0.11; _audioGear = gear; }
+    if (_shiftCut > 0) _shiftCut -= dt;
+
+    // load shapes the timbre: on throttle the mix leans on the upper orders and
+    // the filter opens; off throttle it goes soft and dark
+    const load = throttle;
+    gMain.gain.setTargetAtTime(0.42 + load * 0.34, t, 0.05);
+    gHarm.gain.setTargetAtTime(0.20 + load * 0.30, t, 0.05);
+    gSub.gain.setTargetAtTime(0.62 - load * 0.18, t, 0.05);
+    gWhine.gain.setTargetAtTime(r * r * 0.075 * (0.35 + load * 0.65), t, 0.05);
+    engineBody.gain.setTargetAtTime(6 + load * 7, t, 0.08);
+    engineFilter.frequency.linearRampToValueAtTime(320 + r * 2400 + load * 1100, t + 0.05);
+
+    let vol = 0.028 + throttle * 0.15 + r * 0.075;
+    // rev limiter: cutting the fuel at the redline makes the note stutter
+    if (r > 0.985 && throttle > 0) vol *= 0.45 + 0.55 * (Math.sin(t * 190) > 0 ? 1 : 0);
+    if (_shiftCut > 0) vol *= 0.38;
+    engineGain.gain.linearRampToValueAtTime(Math.max(0.004, vol), t + 0.05);
+    lumpGain.gain.setTargetAtTime(vol * (0.30 - load * 0.22), t, 0.06);   // lumpiest at idle
+
     // exhaust follows rpm, loudest under load
-    exhaustFilter.frequency.linearRampToValueAtTime(90 + r * 420, t + 0.08);
-    exhaustGain.gain.linearRampToValueAtTime(throttle * 0.055 + r * 0.02, t + 0.08);
+    exhaustFilter.frequency.linearRampToValueAtTime(80 + r * 300, t + 0.05);
+    exhaustGain.gain.linearRampToValueAtTime(throttle * 0.06 + r * 0.028, t + 0.05);
+    exhaustFilter2.frequency.linearRampToValueAtTime(500 + r * 1400, t + 0.05);
+    exhaustGain2.gain.linearRampToValueAtTime(throttle * r * 0.05, t + 0.05);
+
+    // overrun burble — random crackles while coasting at high rpm
+    if (throttle === 0 && r > 0.45) {
+        _burbleT -= dt;
+        if (_burbleT <= 0) {
+            _burbleT = 0.03 + Math.random() * 0.09;
+            burbleFilter.frequency.setValueAtTime(180 + Math.random() * 320, t);
+            burbleGain.gain.cancelScheduledValues(t);
+            burbleGain.gain.setValueAtTime(0.05 * r * (0.4 + Math.random() * 0.6), t);
+            burbleGain.gain.exponentialRampToValueAtTime(0.0005, t + 0.055);
+        }
+    } else { _burbleT = 0; }
     // wind
     const sp = speed / MAX_SPEED;
     windFilter.frequency.linearRampToValueAtTime(300 + sp * 900, t + 0.1);
@@ -674,6 +867,67 @@ function playCollision() {
     g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
     src.connect(bp); bp.connect(g); g.connect(audioCtx.destination);
     src.start(); src.stop(audioCtx.currentTime + 0.2);
+}
+
+// Three layers, because a single noise burst reads as "click", not "boom":
+// a sharp crack, a sub-bass drop you feel more than hear, and a long noise tail
+// that sweeps downward like the blast rolling away.
+function playExplosion() {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+
+    const len = Math.floor(audioCtx.sampleRate * 2.2);
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+
+    // 1. crack — bright, instant, gone in 200 ms
+    {
+        const s = audioCtx.createBufferSource(); s.buffer = buf;
+        const hp = audioCtx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.5, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+        s.connect(hp); hp.connect(g); g.connect(audioCtx.destination);
+        s.start(t); s.stop(t + 0.25);
+    }
+    // 2. sub drop
+    {
+        const o = audioCtx.createOscillator(); o.type = 'sine';
+        o.frequency.setValueAtTime(120, t);
+        o.frequency.exponentialRampToValueAtTime(24, t + 0.85);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.62, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(t); o.stop(t + 1.2);
+    }
+    // 3. rumble tail — lowpass sweeps down as the blast rolls away
+    {
+        const s = audioCtx.createBufferSource(); s.buffer = buf;
+        const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 1.2;
+        lp.frequency.setValueAtTime(2400, t);
+        lp.frequency.exponentialRampToValueAtTime(90, t + 1.6);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.55, t + 0.05);
+        g.gain.exponentialRampToValueAtTime(0.0008, t + 1.9);
+        s.connect(lp); lp.connect(g); g.connect(audioCtx.destination);
+        s.start(t); s.stop(t + 2.0);
+    }
+    // debris scatter — a few late metallic ticks
+    for (let i = 0; i < 7; i++) {
+        const dt2 = 0.25 + Math.random() * 1.0;
+        const o = audioCtx.createOscillator(); o.type = 'square';
+        o.frequency.value = 900 + Math.random() * 2600;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, t + dt2);
+        g.gain.exponentialRampToValueAtTime(0.035, t + dt2 + 0.004);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dt2 + 0.07);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(t + dt2); o.stop(t + dt2 + 0.09);
+    }
 }
 
 function resumeAudio() {
@@ -1237,15 +1491,139 @@ pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
 pGeo.setAttribute('color', new THREE.BufferAttribute(pColA,3));
 const pMat=new THREE.PointsMaterial({ vertexColors:true, size:0.5, transparent:true, opacity:0.55, depthWrite:false });
 scene.add(new THREE.Points(pGeo,pMat));
-function emit(x,y,z,n,r=0.74,g=0.69,b=0.59,up=1,spread=1){
+function emit(x,y,z,n,r=0.74,g=0.69,b=0.59,up=1,spread=1,lifeMul=1){
     for(let i=0;i<n;i++){ const j=pIdx*3;
         pPos[j]=x+(Math.random()-0.5)*0.6*spread; pPos[j+1]=y+Math.random()*0.2; pPos[j+2]=z+(Math.random()-0.5)*0.6*spread;
         pVel[j]=(Math.random()-0.5)*2.5*spread; pVel[j+1]=(0.4+Math.random())*up; pVel[j+2]=(Math.random()-0.5)*2.5*spread;
         const v=0.9+Math.random()*0.2;
         pColA[j]=r*v; pColA[j+1]=g*v; pColA[j+2]=b*v;
-        pLife[pIdx]=0.5+Math.random()*0.6; pIdx=(pIdx+1)%MAXP;
+        pLife[pIdx]=(0.5+Math.random()*0.6)*lifeMul; pIdx=(pIdx+1)%MAXP;
     }
     _pColDirty=true;
+}
+// emit in a sphere shell rather than a flat-ish puff — used by the fireball so
+// debris actually flies in every direction instead of drifting upward
+function emitBurst(x,y,z,n,r,g,b,speed,lifeMul=1){
+    for(let i=0;i<n;i++){ const j=pIdx*3;
+        const th=Math.random()*6.2832, ph=Math.acos(Math.random()*2-1);
+        const sx=Math.sin(ph)*Math.cos(th), sy=Math.cos(ph), sz=Math.sin(ph)*Math.sin(th);
+        const sp=speed*(0.35+Math.random()*0.65);
+        pPos[j]=x+sx*0.5; pPos[j+1]=y+sy*0.5; pPos[j+2]=z+sz*0.5;
+        pVel[j]=sx*sp; pVel[j+1]=sy*sp+speed*0.35; pVel[j+2]=sz*sp;
+        const v=0.85+Math.random()*0.3;
+        pColA[j]=Math.min(1,r*v); pColA[j+1]=Math.min(1,g*v); pColA[j+2]=Math.min(1,b*v);
+        pLife[pIdx]=(0.5+Math.random()*0.8)*lifeMul; pIdx=(pIdx+1)%MAXP;
+    }
+    _pColDirty=true;
+}
+function stepParticles(dt){
+    let _live=0;
+    for(let i=0;i<MAXP;i++){ if(pLife[i]>0){ pLife[i]-=dt; _live++; const j=i*3;
+        pPos[j]+=pVel[j]*dt; pPos[j+1]+=pVel[j+1]*dt; pPos[j+2]+=pVel[j+2]*dt; pVel[j+1]-=2*dt;
+        // air drag so the fireball's fast debris decelerates instead of
+        // sailing off in a straight line
+        const dr=1-Math.min(0.6,1.1*dt);
+        pVel[j]*=dr; pVel[j+2]*=dr;
+    } else { pPos[i*3+1]=-999; } }
+    if(_explosionBoost>0){
+        _explosionBoost-=dt;
+        pMat.size=1.8; pMat.opacity=1;
+    } else { pMat.size=0.5; pMat.opacity=0.55; }
+    if(_live>0 || _pLive>0) pGeo.attributes.position.needsUpdate=true;
+    _pLive=_live;
+    if(_pColDirty){ pGeo.attributes.color.needsUpdate=true; _pColDirty=false; }
+}
+
+// ════════════════════════════════════════════════════════════
+//  EXPLOSION — fireball + shockwave + light, played on a hard crash
+// ════════════════════════════════════════════════════════════
+// The old crash effect emitted particles and called resetCar() in the same
+// frame, so the camera teleported to the respawn point before a single frame of
+// it was drawn — you never saw the explosion you triggered. Now the wreck holds
+// position for ~1.7 s while this plays out, then respawns.
+const exGroup = new THREE.Group();
+exGroup.visible = false;
+scene.add(exGroup);
+const _exBallGeo = new THREE.IcosahedronGeometry(1, 3);
+const exBalls = [];
+for(let i=0;i<4;i++){
+    const m = new THREE.Mesh(_exBallGeo, new THREE.MeshBasicMaterial({
+        color: i===0?0xfff2c0 : (i===1?0xffa524 : 0xff5a10),
+        transparent:true, opacity:1, blending:THREE.AdditiveBlending, depthWrite:false
+    }));
+    m.userData.off = new THREE.Vector3((Math.random()-0.5)*1.6, Math.random()*1.2, (Math.random()-0.5)*1.6);
+    m.userData.grow = 3.2 + Math.random()*2.6;
+    m.userData.delay = i*0.055;
+    m.renderOrder = 3;
+    exGroup.add(m); exBalls.push(m);
+}
+const exSmokeMat = new THREE.MeshBasicMaterial({ color:0x2a2622, transparent:true, opacity:0, depthWrite:false });
+const exSmoke = new THREE.Mesh(_exBallGeo, exSmokeMat);
+exSmoke.renderOrder = 2; exGroup.add(exSmoke);
+const exRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.72, 1, 48).rotateX(-Math.PI/2),
+    new THREE.MeshBasicMaterial({ color:0xffd9a0, transparent:true, opacity:0, side:THREE.DoubleSide,
+        blending:THREE.AdditiveBlending, depthWrite:false })
+);
+exRing.renderOrder = 3; exGroup.add(exRing);
+const exLight = new THREE.PointLight(0xff8828, 0, 90, 2);
+exGroup.add(exLight);
+let exT = -1, exDur = 1.9;
+const exPos = new THREE.Vector3();
+
+function triggerExplosion(x, y, z){
+    exPos.set(x, y, z);
+    exGroup.position.copy(exPos);
+    exGroup.visible = true;
+    exT = 0;
+    // clear the pool so the fireball owns every particle slot
+    for(let i=0;i<MAXP;i++){ pLife[i]=0; pPos[i*3+1]=-999; }
+    pIdx=0;
+    emitBurst(x, y, z, 150, 1.0, 0.62, 0.12, 17, 0.85);   // fire
+    emitBurst(x, y, z, 90,  1.0, 0.95, 0.55, 26, 0.55);   // white-hot sparks
+    emitBurst(x, y, z, 110, 0.20, 0.18, 0.17, 7,  2.4);   // smoke
+    emitBurst(x, y, z, 50,  0.42, 0.40, 0.44, 22, 1.5);   // debris
+    _explosionBoost = 0.9;
+    addShake(1.5);
+    blurU.uFlash.value = 0.85;
+    playExplosion();
+}
+function updateExplosion(dt){
+    // the screen flash fades much faster than the fireball, and has to keep
+    // fading after the fireball itself is gone
+    if(blurU.uFlash.value > 0) blurU.uFlash.value = Math.max(0, blurU.uFlash.value - dt*3.2);
+    if(exT < 0) return;
+    exT += dt;
+    const t = exT / exDur;
+    if(t >= 1){ exT = -1; exGroup.visible = false; exLight.intensity = 0; return; }
+
+    for(const m of exBalls){
+        const lt = clamp((exT - m.userData.delay) / (exDur*0.55), 0, 1);
+        if(lt <= 0){ m.visible = false; continue; }
+        m.visible = true;
+        // fast expansion that eases off — a fireball loses momentum quickly
+        const s = 0.5 + m.userData.grow * (1 - Math.pow(1-lt, 2.4));
+        m.scale.setScalar(s);
+        m.position.copy(m.userData.off).multiplyScalar(lt);
+        m.position.y += lt * 1.8;
+        m.material.opacity = Math.pow(1-lt, 1.6);
+    }
+    // smoke ball outlives the flame and keeps rising
+    const st = clamp(exT / exDur, 0, 1);
+    exSmoke.visible = true;
+    exSmoke.scale.setScalar(1.2 + st*7.5);
+    exSmoke.position.y = st*4.5;
+    exSmokeMat.opacity = 0.55 * Math.sin(Math.min(1,st*1.35) * Math.PI) * (1-st*0.4);
+    // ground shockwave
+    const rt = clamp(exT / (exDur*0.42), 0, 1);
+    exRing.visible = rt < 1;
+    exRing.scale.setScalar(1 + rt*26);
+    exRing.position.y = 0.25;
+    exRing.material.opacity = (1-rt) * 0.75;
+    // light flash: violent spike, then a flickering ember glow
+    const flick = 0.85 + Math.sin(exT*47)*0.15;
+    exLight.intensity = t < 0.08 ? 380*(t/0.08) : 380*Math.pow(1-t, 3.2)*flick;
+    exLight.position.y = 1.2 + st*2.5;
 }
 
 // ── tire tracks ──
@@ -1331,15 +1709,99 @@ function resetCar(){
     vx=vz=0; vy=0; bodyY=p.y+RIDE_H; gear=0;
 }
 
+// ── crash → explosion → respawn ──
+// Physics and input are frozen for CRASH_HOLD seconds while the wreck burns.
+// The camera pulls back and orbits the fireball so the player actually sees it;
+// resetCar() only runs once the effect is over.
+const CRASH_HOLD = 1.7;
+let _crashActive=false, _crashT=0;
+const _crashPos = new THREE.Vector3();
+let _crashCamAng = 0;
+function startCrash(){
+    _crashActive = true;
+    _crashT = 0;
+    _crashPos.set(pos.x, bodyY, pos.z);
+    // the orbit starts from wherever the chase cam already was, so the pull-back
+    // is continuous instead of a cut
+    _crashCamAng = Math.atan2(camera.position.x-pos.x, camera.position.z-pos.z);
+    vx=vz=0; vy=0; gear=0; rpm=IDLE_RPM; _prevVf=0; _crashTimer=0;
+    car.visible = false;
+    triggerExplosion(_crashPos.x, _crashPos.y + 0.7, _crashPos.z);
+}
+function updateCrash(dt){
+    _crashT += dt;
+    updateExplosion(dt);
+    stepParticles(dt);
+    updateTracks(dt);
+
+    // slow orbit + rise, easing outward from the impact point
+    _crashCamAng += dt*0.42;
+    const e = clamp(_crashT/CRASH_HOLD, 0, 1);
+    const dist = 7 + e*7.5, hgt = 3.0 + e*3.2;
+    const tx = _crashPos.x + Math.sin(_crashCamAng)*dist;
+    const tz = _crashPos.z + Math.cos(_crashCamAng)*dist;
+    const ty = Math.max(getHeight(tx,tz)+1.6, _crashPos.y+hgt);
+    camPos.x += (tx-camPos.x)*Math.min(1,4*dt);
+    camPos.y += (ty-camPos.y)*Math.min(1,4*dt);
+    camPos.z += (tz-camPos.z)*Math.min(1,4*dt);
+    camera.position.copy(camPos);
+    camera.lookAt(_crashPos.x, _crashPos.y+1.2, _crashPos.z);
+    applyShake(dt);
+
+    // engine is dead while the wreck burns
+    _blurAmt *= Math.max(0, 1-dt*4);
+    blurU.uStrength.value = _blurAmt < 0.008 ? 0 : _blurAmt;
+    updateAudio(IDLE_RPM, 0, 0, false, 0, 0, dt);
+
+    // keep the world alive underneath so nothing pops in on respawn
+    sun.position.set(_crashPos.x+sunDir.x*120, _crashPos.y+sunDir.y*120, _crashPos.z+sunDir.z*120);
+    sun.target.position.copy(_crashPos);
+    ensureWater();
+    water.position.x=camera.position.x; water.position.z=camera.position.z;
+    waterUniforms.time.value += dt;
+    roadExtend(pos.x,pos.z);
+    updateChunks(pos.x,pos.z);
+    updateClouds(dt); updateBirds(dt);
+    updatePeers(dt); updateNameTags();
+    updateHUD(0);
+
+    if(_crashT >= CRASH_HOLD){
+        _crashActive = false;
+        car.visible = true;
+        resetCar();
+        camHeading = heading;
+        // drop the camera behind the fresh spawn immediately — letting it lerp
+        // from the wreck would fly it across the map
+        camPos.set(pos.x - Math.sin(heading)*8.5, pos.y+3.4, pos.z - Math.cos(heading)*8.5);
+    }
+}
+
 // ── Camera ──
 let camMode=0; // 0 chase, 1 near, 2 hood
 let camHeading=0;
-let _lastBlur=-1;
+let _blurAmt=0;
+// ── camera shake (crash impacts) ──
+let _shake=0, _shakeT=0;
+function addShake(v){ if(v>_shake) _shake=Math.min(1.6,v); }
+function applyShake(dt){
+    if(_shake<=0.001){ _shake=0; return; }
+    _shake=Math.max(0,_shake-dt*1.5);
+    _shakeT+=dt;
+    // two detuned sines per axis: a decaying rattle rather than white jitter
+    const s=_shake*_shake*0.85;
+    camera.position.x += (Math.sin(_shakeT*47)+Math.sin(_shakeT*31.3))*s*0.5;
+    camera.position.y += (Math.sin(_shakeT*53.7)+Math.sin(_shakeT*38.1))*s*0.4;
+    camera.position.z += (Math.sin(_shakeT*41.9)+Math.sin(_shakeT*27.7))*s*0.5;
+    camera.rotation.z += Math.sin(_shakeT*36.5)*s*0.045;
+}
 // debug probe (harmless in production, used by automated tests)
 window.__dbg = () => ({ x:pos.x, y:pos.y, z:pos.z, heading, vx, vz, bodyY, gear, rpm,
     ground: getHeight(pos.x,pos.z),
     gF: getHeight(pos.x+Math.sin(heading)*3, pos.z+Math.cos(heading)*3),
-    canDrive:_canDrive, keys:{...keys} });
+    canDrive:_canDrive, keys:{...keys},
+    blur:blurU.uStrength.value, flash:blurU.uFlash.value,
+    crash:_crashActive, exT, shake:_shake });
+window.__crashTest = () => startCrash();
 const camPos=new THREE.Vector3().copy(camera.position);
 function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 
@@ -1348,6 +1810,7 @@ function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 // ════════════════════════════════════════════════════════════
 function update(dt){
     if(dt>0.05)dt=0.05;
+    if(_crashActive){ updateCrash(dt); return; }
     let steerTarget=0, throttle=0, brake=0;
     if(keys.l)steerTarget-=1; if(keys.r)steerTarget+=1;
     if(keys.f)throttle=1; if(keys.b)brake=1;
@@ -1363,20 +1826,14 @@ function update(dt){
     const vabs=Math.abs(vf);
     if(vabs>0.5) totalDriveM+=vabs*dt;
 
-    // crash detection — >40 km/h speed change in 0.5 s → explosion + reset
+    // crash detection — >40 km/h speed change in 0.5 s → explosion, then respawn
     _crashTimer+=dt;
     if(_crashTimer>=0.5){
         _crashTimer-=0.5;
         const cv=Math.abs(vf);
         if(cv>1&&_prevVf>1&&_prevVf-cv>11.11){
-            // clear pool & big explosion
-            for(let _i=0;_i<MAXP;_i++){ pLife[_i]=0; pPos[_i*3+1]=-999; }
-            pIdx=0;
-            emit(pos.x,bodyY,pos.z,250,1,0.8,0.1,6,6);
-            emit(pos.x,bodyY,pos.z,150,0.99,0.5,0.05,5,5);
-            emit(pos.x,bodyY,pos.z,100,0.2,0.2,0.2,2,3);
-            _explosionBoost=0.4;
-            resetCar();
+            startCrash();
+            return;
         }
         _prevVf=cv;
     }
@@ -1604,19 +2061,10 @@ function update(dt){
     if(groundY < SEA+0.05 && vabs>4){
         emit(pos.x + F2.x*1.6, SEA+0.25, pos.z + F2.z*1.6, 3, 0.62,0.78,0.88, 2.2, 1.4);
     }
-    let _live=0;
-    for(let i=0;i<MAXP;i++){ if(pLife[i]>0){ pLife[i]-=dt; _live++; const j=i*3;
-        pPos[j]+=pVel[j]*dt; pPos[j+1]+=pVel[j+1]*dt; pPos[j+2]+=pVel[j+2]*dt; pVel[j+1]-=2*dt;
-    } else { pPos[i*3+1]=-999; } }
-    if(_explosionBoost>0){
-        _explosionBoost-=dt;
-        pMat.size=1.8; pMat.opacity=1;
-    } else { pMat.size=0.5; pMat.opacity=0.55; }
     // upload only what changed: positions while particles live (plus the one
     // frame they wink out), colours only on the frames emit() wrote new ones
-    if(_live>0 || _pLive>0) pGeo.attributes.position.needsUpdate=true;
-    _pLive=_live;
-    if(_pColDirty){ pGeo.attributes.color.needsUpdate=true; _pColDirty=false; }
+    stepParticles(dt);
+    updateExplosion(dt);
     updateTracks(dt);
 
     // ── gears / rpm ──
@@ -1645,7 +2093,7 @@ function update(dt){
 
     // ── audio ──
     if (!audioCtx) initAudio();
-    updateAudio(rpm, throttle, vabs, onRoad, Math.abs(vl), hb);
+    updateAudio(rpm, throttle, vabs, onRoad, Math.abs(vl), hb, dt);
 
     // ── camera ──
     updateCamera(dt, vabs, F2);
@@ -1734,12 +2182,26 @@ function updateCamera(dt, vabs, F){
     }
     camera.position.copy(camPos);
     camera.lookAt(pos.x+F.x*look, bodyY+1.2, pos.z+F.z*look);
+    applyShake(dt);
     const fov = 62 + (vabs/MAX_SPEED)*2;
     const newFov = camera.fov + (fov-camera.fov)*Math.min(1,4*dt);
     if(Math.abs(newFov-camera.fov)>0.002){ camera.fov=newFov; camera.updateProjectionMatrix(); }
-    // ── motion blur (write the style only when the value actually changes) ──
-    const blur = Math.round(clamp((vabs/MAX_SPEED)*1.2, 0, 1.2)*50)/50;
-    if(blur!==_lastBlur){ _lastBlur=blur; renderer.domElement.style.filter = blur ? `blur(${blur}px)` : ''; }
+    // ── motion blur ──
+    // ramped rather than snapped: instant full-strength blur on a hard landing
+    // or a gear-limited surge looked like a glitch, easing it reads as speed.
+    // Non-linear in speed so slow cruising stays clean and the top end smears.
+    // MAX_SPEED is far above what the car actually reaches, so the curve is
+    // tuned against the usable band: a hint of smear from ~60 km/h, full effect
+    // well before the theoretical top speed
+    const sp = clamp(vabs/MAX_SPEED, 0, 1);
+    const target = clamp(smoothstep(0.05, 0.75, sp) * (0.55 + sp*0.6), 0, 1.2);
+    _blurAmt += (target-_blurAmt) * Math.min(1, 5*dt);
+    blurU.uStrength.value = _blurAmt < 0.008 ? 0 : _blurAmt;
+    // blur origin leads the turn: in a corner the smear pivots around the apex
+    const cTgtX = 0.5 - steerVis*0.22, cTgtY = 0.5 + clamp(vy,-8,8)*0.004;
+    const c = blurU.uCenter.value;
+    c.x += (cTgtX-c.x)*Math.min(1,3*dt);
+    c.y += (cTgtY-c.y)*Math.min(1,3*dt);
     // ── FPS / Ping display ──
     _fpsFrames++;
     const fpsNow=performance.now();
@@ -2119,10 +2581,18 @@ function animate(){
             _pendingCleanup.splice(i,1);
         }
     }
-    renderer.render(scene,camera);
+    // the composer only earns its extra fullscreen pass once something is
+    // actually happening on screen — below that, render straight to the canvas
+    if(blurU.uStrength.value > 0.01 || blurU.uFlash.value > 0.002) composer.render();
+    else renderer.render(scene,camera);
 }
 animate();
 
 setTimeout(()=>document.getElementById('loading').classList.add('hidden'), 400);
 
-addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+addEventListener('resize',()=>{
+    camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+    composer.setSize(innerWidth,innerHeight);
+    blurU.uAspect.value=innerWidth/innerHeight;
+});
