@@ -239,8 +239,94 @@ function roadPush(){
     rGenH += clamp((target - rGenH) * 0.25, -maxDh, maxDh);
     roadWP.push({ x:rGenX, z:rGenZ, y:rGenH, a:rGenA });
     roadInsertHash(roadWP.length-1);
+    tryAddRamp(roadWP.length-1);
     rGenI++;
 }
+// ════════════════════════════════════════════════════════════
+//  JUMP RAMPS — dirt spurs that branch off the road and kick you airborne
+// ════════════════════════════════════════════════════════════
+// A ramp is not a mesh sitting on the ground: it is folded into getHeight(), so
+// the terrain, the physics, the suspension and the wheel raycasts all see the
+// same surface for free. The visible strip is then drawn just above it exactly
+// the way the road ribbon is drawn above the carved road corridor.
+const RAMP_EVERY   = 70;    // waypoints between ramps (~280 m)
+const RAMP_APPROACH= 34;    // run-up length before the kicker starts
+const RAMP_KICK    = 17;    // length of the rising part
+const RAMP_H       = 4.2;   // launch height at the lip
+const RAMP_HALF    = 4.2;   // half width of the drivable strip
+const RAMP_FEATHER = 3.0;   // lateral blend from strip edge into terrain
+const RAMP_CELL    = 48;    // spatial hash cell
+const ramps = [];
+const rampHash = new Map();
+function rampCellKey(cx,cz){ return cx*4194304 + cz; }
+function rampInsertHash(i){
+    const r = ramps[i];
+    // cover the ramp's whole footprint so a lookup anywhere on it finds it
+    const reach = RAMP_HALF + RAMP_FEATHER;
+    const x0 = Math.min(r.x0, r.xEnd) - reach, x1 = Math.max(r.x0, r.xEnd) + reach;
+    const z0 = Math.min(r.z0, r.zEnd) - reach, z1 = Math.max(r.z0, r.zEnd) + reach;
+    for(let cx=Math.floor(x0/RAMP_CELL); cx<=Math.floor(x1/RAMP_CELL); cx++)
+    for(let cz=Math.floor(z0/RAMP_CELL); cz<=Math.floor(z1/RAMP_CELL); cz++){
+        const k=rampCellKey(cx,cz);
+        let a=rampHash.get(k); if(!a){ a=[]; rampHash.set(k,a); }
+        a.push(i);
+    }
+}
+// height of the ramp surface at distance u along its centreline
+function rampSurfaceY(r, u){
+    if(u <= r.L1) return mix(r.y0, r.yA, smoothstep(0, r.L1, u));
+    const t = (u - r.L1) / r.L2;
+    // parabolic kicker: starts tangent to the run-up (no kink to bounce the
+    // suspension) and steepens to a ~2H/L2 lip angle at take-off
+    return r.yA + RAMP_H * t * t;
+}
+function tryAddRamp(i){
+    if(i < 40 || i % RAMP_EVERY !== 0) return;
+    const w = roadWP[i]; if(!w) return;
+    // everything below is a pure function of (worldSeed, i), so the same world
+    // always grows the same ramps — required for multiplayer to agree
+    const h1 = hash2(i*131 + 7, 613);
+    const side = h1 < 0.5 ? -1 : 1;
+    const ang = w.a + side * (0.42 + hash2(i*197 + 3, 811) * 0.34);
+    const dx = Math.sin(ang), dz = Math.cos(ang);
+    const L1 = RAMP_APPROACH * (0.85 + hash2(i*271 + 5, 419) * 0.4);
+    const L2 = RAMP_KICK;
+    const x0 = w.x, z0 = w.z, y0 = w.y;
+    const xA = x0 + dx*L1,     zA = z0 + dz*L1;
+    const xEnd = x0 + dx*(L1+L2), zEnd = z0 + dz*(L1+L2);
+    // never build over water, and never on ground the run-up could not climb
+    const natA = naturalHeight(xA, zA);
+    if(natA < SEA + 2 || naturalHeight(xEnd, zEnd) < SEA + 2) return;
+    if(naturalHeight(x0 + dx*L1*0.5, z0 + dz*L1*0.5) < SEA + 2) return;
+    const yA = clamp(natA, y0 - L1*0.08, y0 + L1*0.08);
+    ramps.push({ x0, z0, y0, dx, dz, L1, L2, yA, xEnd, zEnd,
+                 yLip: yA + RAMP_H, side, i });
+    rampInsertHash(ramps.length-1);
+}
+// ramp surface under (x,z): y = height, w = 0..1 blend weight (0 = not on one)
+const _rampOut = { y:0, w:0 };
+function rampAt(x,z){
+    _rampOut.w = 0;
+    const a = rampHash.get(rampCellKey(Math.floor(x/RAMP_CELL), Math.floor(z/RAMP_CELL)));
+    if(!a) return _rampOut;
+    for(const i of a){
+        const r = ramps[i];
+        const px = x - r.x0, pz = z - r.z0;
+        const u = px*r.dx + pz*r.dz;              // along the ramp
+        if(u < 0 || u > r.L1 + r.L2) continue;    // past the lip → open air
+        const v = Math.abs(px*r.dz - pz*r.dx);    // lateral offset
+        if(v > RAMP_HALF + RAMP_FEATHER) continue;
+        const lat = v <= RAMP_HALF ? 1 : 1 - smoothstep(RAMP_HALF, RAMP_HALF+RAMP_FEATHER, v);
+        // fade in over the first few metres so the junction with the road is a
+        // seamless widening rather than a step you would trip over
+        const lon = smoothstep(0, 6, u);
+        const wgt = lat * lon;
+        if(wgt > _rampOut.w){ _rampOut.w = wgt; _rampOut.y = rampSurfaceY(r, u); }
+    }
+    return _rampOut;
+}
+function resetRamps(){ ramps.length=0; rampHash.clear(); }
+
 function roadInit(){ rGenH = Math.max(SEA+1.1, naturalHeight(0,0)); for(let i=0;i<80;i++) roadPush(); }
 function roadExtend(px,pz){
     let guard=0;
@@ -278,6 +364,15 @@ function roadInfo(x,z){
 function getHeight(x,z,skipBridge){
     const nat=naturalHeight(x,z);
     const r=roadInfo(x,z);
+    // ramps win over both terrain and the road carve: the run-up starts on the
+    // road surface itself, so blending the two would flatten the take-off
+    const jp = rampAt(x,z);
+    if(jp.w > 0){
+        const base = r.d < CARVE_R
+            ? mix(nat, r.y, r.d<=ROAD_HALF ? 1 : 1-smoothstep(ROAD_HALF, CARVE_R, r.d))
+            : nat;
+        return mix(base, jp.y, jp.w);
+    }
     if(r.d<CARVE_R){
         if(nat < SEA-0.05){
             // road crosses water on a bridge: hard deck edge, no carve
@@ -376,12 +471,10 @@ const MotionBlurShader = {
         }
         col /= wsum;
 
-        // chromatic aberration on the outer edge — subtle, only at real speed
-        float ca = uStrength * falloff * 0.0055;
-        if(ca > 0.0002){
-            col.r = texture2D(tDiffuse, vUv - d * ca).r;
-            col.b = texture2D(tDiffuse, vUv + d * ca).b;
-        }
+        // (No chromatic aberration here. It used to split red and blue outward
+        // at the edges, which read as coloured fringing rather than speed — and
+        // because it overwrote col.r and col.b with single unblurred taps, it
+        // also threw away the smear in two of the three channels.)
 
         // speed vignette: the periphery darkens slightly as the tunnel narrows.
         // Kept deliberately faint — this is a hint at the edge of vision, not a
@@ -1072,6 +1165,7 @@ function buildChunk(cx,cz,lod){
         const nat=naturalHeight(gx,gz);
         if(nat<SEA+1.2 || nat>150) continue;
         const r=roadInfo(gx,gz); if(r.d<CARVE_R/2+2) continue;
+        if(rampAt(gx,gz).w>0) continue;   // nothing grows on a jump strip
         const e=2, hL=naturalHeight(gx-e,gz), hR=naturalHeight(gx+e,gz), hD=naturalHeight(gx,gz-e), hU=naturalHeight(gx,gz+e);
         const slope=(Math.abs(hR-hL)+Math.abs(hU-hD))/(2*e);
         if(slope>0.9) continue;
@@ -1105,6 +1199,7 @@ function buildChunk(cx,cz,lod){
             const nat=naturalHeight(gx,gz);
             if(nat<SEA+1.4 || nat>100) continue;
             const r=roadInfo(gx,gz); if(r.d<CARVE_R/2+2) continue;
+            if(rampAt(gx,gz).w>0) continue;
             const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
             if(slope>0.4) continue;
             const forest=forestAt(gx,gz);
@@ -1126,6 +1221,7 @@ function buildChunk(cx,cz,lod){
             const r=roadInfo(gx,gz);
             if(r.d<CARVE_R/2) continue;
             if(r.d<CARVE_R/2+4 && grng()>(r.d-CARVE_R/2)/4) continue;
+            if(rampAt(gx,gz).w>0) continue;
             const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
             if(slope>0.5) continue;
             if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
@@ -1142,6 +1238,7 @@ function buildChunk(cx,cz,lod){
             const r=roadInfo(gx,gz);
             if(r.d<CARVE_R/2) continue;
             if(r.d<CARVE_R/2+4 && grng()>(r.d-CARVE_R/2)/4) continue;
+            if(rampAt(gx,gz).w>0) continue;
             const e=1.5, slope=(Math.abs(naturalHeight(gx+e,gz)-naturalHeight(gx-e,gz))+Math.abs(naturalHeight(gx,gz+e)-naturalHeight(gx,gz-e)))/(2*e);
             if(slope>0.5) continue;
             if(slope>0.3 && grng()>(0.5-slope)/0.2) continue;
@@ -1265,7 +1362,10 @@ function regenerateWorld(seed) {
     // Clear road data
     roadWP.length = 0;
     roadHash.clear();
+    resetRamps();
     rGenX = 0; rGenZ = 0; rGenA = 0; rGenH = 0; rGenI = 0; _roadBias = 0;
+    if (rampMesh) { scene.remove(rampMesh); rampMesh.geometry.dispose(); rampMesh = null; }
+    if (rampLipMesh) { scene.remove(rampLipMesh); rampLipMesh.geometry.dispose(); rampLipMesh = null; }
     if (roadMesh) { scene.remove(roadMesh); roadMesh.geometry.dispose(); roadMesh = null; }
     if (lineMesh) { scene.remove(lineMesh); lineMesh.geometry.dispose(); lineMesh = null; }
     roadBuiltIdx = -99999;
@@ -1345,6 +1445,76 @@ function rebuildRoad(centerIdx){
     roadMesh=new THREE.Mesh(rg, roadSurfMat); roadMesh.receiveShadow=true; roadMesh.renderOrder=0; scene.add(roadMesh);
     lineMesh=new THREE.Mesh(lg, lineSurfMat); scene.add(lineMesh);
     rebuildBridges(a,b);
+    rebuildRamps();
+}
+
+// ── Jump ramp surfaces ──
+// Packed dirt, drawn a hair above the height getHeight() already reports, the
+// same trick the road ribbon uses over its carved corridor. The lip gets a
+// darker leading edge so you can read the take-off point at speed.
+const rampSurfMat = new THREE.MeshStandardMaterial({ color:0x6b5638, roughness:0.95, metalness:0, side:THREE.DoubleSide });
+const rampLipMat  = new THREE.MeshStandardMaterial({ color:0x2e2519, roughness:0.9, metalness:0, side:THREE.DoubleSide });
+let rampMesh=null, rampLipMesh=null;
+function rebuildRamps(){
+    if(rampMesh){ scene.remove(rampMesh); rampMesh.geometry.dispose(); rampMesh=null; }
+    if(rampLipMesh){ scene.remove(rampLipMesh); rampLipMesh.geometry.dispose(); rampLipMesh=null; }
+    if(!ramps.length) return;
+    const v=[], idx=[], lv=[], li=[];
+    let vc=0, lc=0;
+    for(const r of ramps){
+        // only the ramps near the player are worth geometry
+        const ddx=r.x0-pos.x, ddz=r.z0-pos.z;
+        if(ddx*ddx+ddz*ddz > 1200*1200) continue;
+        const total=r.L1+r.L2;
+        // denser sampling over the kicker, where the curvature lives
+        const STEPS=26;
+        const nx=r.dz, nz=-r.dx;          // lateral unit
+        let prev=null;
+        for(let s=0;s<=STEPS;s++){
+            const u=total*s/STEPS;
+            const ry=rampSurfaceY(r,u);
+            const cx=r.x0+r.dx*u, cz=r.z0+r.dz*u;
+            // taper the mouth outward so it visually flares off the road
+            const hw=RAMP_HALF*(u<8 ? 1+ (1-u/8)*0.45 : 1);
+            const cur=vc;
+            // Each edge rides on whichever is higher, the ramp curve or the
+            // ground under that exact vertex. Over the first few metres
+            // getHeight() is still blending out of the road, and over the
+            // flared mouth it is feathering laterally, so the pure ramp curve
+            // sits below the ground there and the road would poke through.
+            const xa=cx+nx*hw, za=cz+nz*hw, xb=cx-nx*hw, zb=cz-nz*hw;
+            v.push(xa, Math.max(ry, getHeight(xa,za))+0.14, za);
+            v.push(xb, Math.max(ry, getHeight(xb,zb))+0.14, zb);
+            vc+=2;
+            if(prev!==null) idx.push(prev,prev+1,cur, cur,prev+1,cur+1);
+            prev=cur;
+        }
+        // lip face: a short vertical skirt hanging off the take-off edge
+        {
+            const y=rampSurfaceY(r,total)+0.14;
+            const cx=r.x0+r.dx*total, cz=r.z0+r.dz*total;
+            const drop=Math.min(2.2, RAMP_H*0.55);
+            const cur=lc;
+            lv.push(cx+nx*RAMP_HALF, y, cz+nz*RAMP_HALF);
+            lv.push(cx-nx*RAMP_HALF, y, cz-nz*RAMP_HALF);
+            lv.push(cx+nx*RAMP_HALF, y-drop, cz+nz*RAMP_HALF);
+            lv.push(cx-nx*RAMP_HALF, y-drop, cz-nz*RAMP_HALF);
+            li.push(cur,cur+1,cur+2, cur+1,cur+3,cur+2); lc+=4;
+        }
+    }
+    if(vc){
+        const g=new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(v,3));
+        g.setIndex(idx); g.computeVertexNormals();
+        rampMesh=new THREE.Mesh(g, rampSurfMat);
+        rampMesh.receiveShadow=true; rampMesh.renderOrder=0; scene.add(rampMesh);
+    }
+    if(lc){
+        const g=new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(lv,3));
+        g.setIndex(li); g.computeVertexNormals();
+        rampLipMesh=new THREE.Mesh(g, rampLipMat); scene.add(rampLipMesh);
+    }
 }
 
 // ── Bridges: deck skirts, red steel railings and concrete pylons wherever
@@ -1937,7 +2107,10 @@ function update(dt){
 
     // road check
     const rinfo=roadInfo(pos.x,pos.z);
-    const onRoad = rinfo.d < ROAD_HALF+1.5;
+    // the jump strip is packed dirt but still a built surface: give it road
+    // grip so the run-up is controllable instead of a slide into the scenery
+    const onRamp = rampAt(pos.x,pos.z).w > 0.5;
+    const onRoad = rinfo.d < ROAD_HALF+1.5 || onRamp;
     if(rinfo.i>=0) _miniRoadIdx=rinfo.i;
 
     // ── ground contact: tire forces only exist when the wheels touch.
