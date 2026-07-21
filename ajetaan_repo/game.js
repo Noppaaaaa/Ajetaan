@@ -1387,7 +1387,7 @@ function update(dt){
     }
 
     // ── steering (front wheels can only turn the car while touching the ground) ──
-    const steerAngle = steer * MAX_STEER_ANGLE * clamp(1 - (Math.abs(vf)*3.6 - 1) * 0.5/199, 0.2, 1);
+    const steerAngle = steer * MAX_STEER_ANGLE * clamp(1 - (Math.abs(vf)*3.6 - 1) * 0.8/199, 0.2, 1);
     if(onGround){
         const dir = vf >= 0 ? 1 : -1;
         if(Math.abs(vf) > 1){
