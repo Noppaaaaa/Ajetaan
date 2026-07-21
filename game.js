@@ -1250,7 +1250,7 @@ function updateTracks(dt){
 let heading = roadWP[1] ? Math.atan2(roadWP[1].x-roadWP[0].x, roadWP[1].z-roadWP[0].z) : 0;
 const pos = new THREE.Vector3(roadWP[0].x, getHeight(roadWP[0].x,roadWP[0].z), roadWP[0].z);
 let vx=0, vz=0;                       // world-space velocity
-let bodyPitch=0, bodyRoll=0, bodyY=pos.y+RIDE_H, vy=0, _airborne=false;
+let bodyPitch=0, bodyRoll=0, bodyY=pos.y+RIDE_H, vy=0, _airborne=false, _airborneTimer=0;
 let gear=0, rpm=IDLE_RPM, steerVis=0, wheelSpin=0;
 let waterTime=0;   // seconds the car has spent below the water line
 let carColorHex='#2b6cc4';
@@ -1466,7 +1466,14 @@ function update(dt){
     const targetY = supportY + RIDE_H;
     const springK = 90, dampK = 7.0;          // ~1.5 Hz spring, critical-ish damping
     const compression = targetY - bodyY;       // >0 = spring compressed
-    _airborne = compression <= -0.12;          // contact state for next frame's tire forces
+    // airborne only counts after 0.5 s — short bounces don't disable steering
+    if(compression <= -0.12){
+        _airborneTimer += dt;
+        if(_airborneTimer >= 0.5) _airborne = true;
+    } else {
+        _airborneTimer = 0;
+        _airborne = false;
+    }
     vy -= GRAVITY * dt;                        // free fall at 9.81 m/s²
     if (compression > -0.12) {                 // wheels in contact (12 cm droop travel)
         // preloaded spring: carries the car's weight at zero compression
