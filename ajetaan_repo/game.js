@@ -1206,7 +1206,7 @@ scene.add(car);
 const MAXP=400;
 const pPos=new Float32Array(MAXP*3), pVel=new Float32Array(MAXP*3), pLife=new Float32Array(MAXP);
 const pColA=new Float32Array(MAXP*3);
-let pIdx=0, _exhaustT=0;
+let pIdx=0, _exhaustT=0, _explosionBoost=0;
 const pGeo=new THREE.BufferGeometry();
 pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
 pGeo.setAttribute('color', new THREE.BufferAttribute(pColA,3));
@@ -1343,8 +1343,13 @@ function update(dt){
         _crashTimer-=0.5;
         const cv=Math.abs(vf);
         if(cv>1&&_prevVf>1&&_prevVf-cv>11.11){
-            emit(pos.x,bodyY,pos.z,150,1,0.5,0.1,3,4);
-            emit(pos.x,bodyY,pos.z,60,0.3,0.3,0.3,2,3);
+            // clear pool & big explosion
+            for(let _i=0;_i<MAXP;_i++){ pLife[_i]=0; pPos[_i*3+1]=-999; }
+            pIdx=0;
+            emit(pos.x,bodyY,pos.z,250,1,0.8,0.1,6,6);
+            emit(pos.x,bodyY,pos.z,150,0.99,0.5,0.05,5,5);
+            emit(pos.x,bodyY,pos.z,100,0.2,0.2,0.2,2,3);
+            _explosionBoost=0.4;
             resetCar();
         }
         _prevVf=cv;
@@ -1576,6 +1581,10 @@ function update(dt){
     for(let i=0;i<MAXP;i++){ if(pLife[i]>0){ pLife[i]-=dt; const j=i*3;
         pPos[j]+=pVel[j]*dt; pPos[j+1]+=pVel[j+1]*dt; pPos[j+2]+=pVel[j+2]*dt; pVel[j+1]-=2*dt;
     } else { pPos[i*3+1]=-999; } }
+    if(_explosionBoost>0){
+        _explosionBoost-=dt;
+        pMat.size=1.8; pMat.opacity=1;
+    } else { pMat.size=0.5; pMat.opacity=0.55; }
     pGeo.attributes.position.needsUpdate=true;
     pGeo.attributes.color.needsUpdate=true;
     updateTracks(dt);
