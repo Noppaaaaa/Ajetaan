@@ -727,6 +727,7 @@ function terrainColor(y,slope,moist){
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.96, metalness:0 });
 const chunks = new Map();          // key -> record
 const _fading = [];                // chunks fading in [{mat,start}]
+const _pendingCleanup = [];        // old meshes from LOD upgrade [{oldObjs,check}]
 const collideByChunk = new Map();  // key -> [{x,z,r}]
 
 function buildChunk(cx,cz,lod){
@@ -2060,8 +2061,9 @@ function processChunkQueue(){
         const job=_chunkBuildQueue.get(bestK);
         _chunkBuildQueue.delete(bestK);
         const _old=chunks.get(bestK);
-        if(_old){ for(const o of _old.objs){ scene.remove(o); o.geometry?.dispose?.(); } }
-        chunks.set(bestK, buildChunk(job.x,job.z,job.lod));
+        const _new=buildChunk(job.x,job.z,job.lod);
+        if(_old) _pendingCleanup.push({ oldObjs:_old.objs, check:_new.objs[0] });
+        chunks.set(bestK, _new);
         _upgrading.delete(bestK);
         if(chunks.size>=1) document.getElementById('loading').classList.add('hidden');
     }
@@ -2078,6 +2080,15 @@ function animate(){
         const t=Math.min((_fn-f.start)/1000,1);
         f.mat.opacity=t;
         if(t>=1){ f.mat.transparent=false; _fading.splice(i,1); }
+    }
+    // remove old LOD meshes once new chunk is fully faded in
+    for(let i=_pendingCleanup.length-1;i>=0;i--){
+        const p=_pendingCleanup[i];
+        const m=p.check.material;
+        if(!m.transparent||m.opacity>=1){
+            for(const o of p.oldObjs){ scene.remove(o); o.geometry?.dispose?.(); }
+            _pendingCleanup.splice(i,1);
+        }
     }
     renderer.render(scene,camera);
 }
