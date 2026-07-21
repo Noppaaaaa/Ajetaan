@@ -147,6 +147,9 @@ canvas{display:block}
 #panel .colors button{width:28px;height:28px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;transition:transform .15s,border-color .2s}
 #panel .colors button:hover{transform:scale(1.14)}
 #panel .colors button.sel{border-color:#fff}
+#panel .panel-btn{width:100%;margin-top:16px;padding:8px 0;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);
+    color:rgba(255,255,255,.6);border-radius:6px;font-size:11px;letter-spacing:1px;cursor:pointer;transition:.15s}
+#panel .panel-btn:hover{background:rgba(127,196,240,.22);border-color:rgba(127,196,240,.5);color:#eaf2f8}
 
 /* ── Online counter ── */
 #online{position:fixed;top:20px;right:66px;pointer-events:none;color:rgba(255,255,255,.6);font-size:12px;letter-spacing:1px;

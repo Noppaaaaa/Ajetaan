@@ -1142,7 +1142,7 @@ const bodyMat = new THREE.MeshPhysicalMaterial({ color:0x2b6cc4, metalness:0.55,
         const size = box.getSize(new THREE.Vector3());
         model.position.y += RIDE_H + 0.15;
         model.userData.isCarModel = true;
-        model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+        model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.material.side = THREE.DoubleSide; } });
         car.add(model);
         applyCarColor(carColorHex);
         if(window.__pendingColor) applyCarColor(window.__pendingColor);
@@ -1264,8 +1264,8 @@ addEventListener('keydown',e=>{
     if(_canDrive){
         if(e.code==='KeyW'||e.code==='ArrowUp')keys.f=1;
         if(e.code==='KeyS'||e.code==='ArrowDown')keys.b=1;
-        if(e.code==='KeyA'||e.code==='ArrowLeft')keys.l=1;
-        if(e.code==='KeyD'||e.code==='ArrowRight')keys.r=1;
+        if(e.code==='KeyD'||e.code==='ArrowLeft')keys.l=1;
+        if(e.code==='KeyA'||e.code==='ArrowRight')keys.r=1;
         if(e.code==='Space'){keys.hb=1;e.preventDefault();}
     }
     if('WSADwsad'.includes(e.key)) chatHide();
@@ -1275,8 +1275,8 @@ addEventListener('keydown',e=>{
 addEventListener('keyup',e=>{
     if(e.code==='KeyW'||e.code==='ArrowUp')keys.f=0;
     if(e.code==='KeyS'||e.code==='ArrowDown')keys.b=0;
-    if(e.code==='KeyA'||e.code==='ArrowLeft')keys.l=0;
-    if(e.code==='KeyD'||e.code==='ArrowRight')keys.r=0;
+        if(e.code==='KeyD'||e.code==='ArrowLeft')keys.l=0;
+        if(e.code==='KeyA'||e.code==='ArrowRight')keys.r=0;
     if(e.code==='Space')keys.hb=0;
 });
 let touchSteer=0,touchAccel=0;
@@ -1829,6 +1829,11 @@ for(const [hex,name] of colors){
 document.getElementById('show-debug').addEventListener('change', function(){
     _debugShow=this.checked;
     _debugEl.classList.toggle('hidden',!_debugShow);
+});
+
+// ── Uusi kartta ──
+document.getElementById('new-map-btn').addEventListener('click',()=>{
+    regenerateWorld(Math.floor(Math.random()*999999)+1);
 });
 
 
