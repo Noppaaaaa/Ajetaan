@@ -1253,6 +1253,7 @@ let vx=0, vz=0;                       // world-space velocity
 let bodyPitch=0, bodyRoll=0, bodyY=pos.y+RIDE_H, vy=0, _airborne=false, _airborneTimer=0;
 let gear=0, rpm=IDLE_RPM, steerVis=0, wheelSpin=0;
 let _crashTimer=0, _prevVf=0;          // crash detection (>40 km/h in 0.5s)
+let _steerSmooth=0, _prevOnGround=true; // steering ramp (0.5s to full)
 let waterTime=0;   // seconds the car has spent below the water line
 let carColorHex='#2b6cc4';
 let netTimer=0;
@@ -1317,10 +1318,10 @@ function cycleCam(){ camMode=(camMode+1)%3; setCamButtons(); }
 // ════════════════════════════════════════════════════════════
 function update(dt){
     if(dt>0.05)dt=0.05;
-    let steer=0, throttle=0, brake=0;
-    if(keys.l)steer-=1; if(keys.r)steer+=1;
+    let steerTarget=0, throttle=0, brake=0;
+    if(keys.l)steerTarget-=1; if(keys.r)steerTarget+=1;
     if(keys.f)throttle=1; if(keys.b)brake=1;
-    if(Math.abs(touchSteer)>0.12)steer=touchSteer;
+    if(Math.abs(touchSteer)>0.12)steerTarget=touchSteer;
     if(touchAccel>0.12)throttle=touchAccel; else if(touchAccel<-0.12)brake=-touchAccel;
     const hb=keys.hb;
 
@@ -1355,6 +1356,14 @@ function update(dt){
     // centre-point ground here would wrongly flag "airborne" on steep slopes,
     // where the body rides on the highest wheel ~1 m above the centre ground.
     const onGround = !_airborne;
+
+    // steering ramp: 0.5s to reach target (resets on landing)
+    if(onGround && !_prevOnGround) _steerSmooth = 0;
+    _prevOnGround = onGround;
+    const _sr = 2; // full deflection in 0.5s
+    const _sd = steerTarget - _steerSmooth;
+    _steerSmooth += Math.sign(_sd) * Math.min(Math.abs(_sd), _sr * dt);
+    const steer = _steerSmooth;
 
     // terrain slope under the car (sampled ±1.5 m along each axis)
     const slopeF = Math.atan2(getHeight(pos.x+F.x*1.5,pos.z+F.z*1.5) - getHeight(pos.x-F.x*1.5,pos.z-F.z*1.5), 3);
