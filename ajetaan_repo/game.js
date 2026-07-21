@@ -1833,6 +1833,7 @@ document.getElementById('show-debug').addEventListener('change', function(){
 
 // ── Uusi kartta ──
 document.getElementById('new-map-btn').addEventListener('click',()=>{
+    worldEpoch = Math.floor(Date.now() / WORLD_MS);
     regenerateWorld(Math.floor(Math.random()*999999)+1);
 });
 
