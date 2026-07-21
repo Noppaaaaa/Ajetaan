@@ -265,7 +265,7 @@ roadInit();   // build the initial road so physics init can read roadWP[0]
 const scene = new THREE.Scene();
 const HORIZON = 0xbcd3e0;
 scene.background = new THREE.Color(HORIZON);
-scene.fog = new THREE.Fog(HORIZON, 20, 600);
+scene.fog = new THREE.FogExp2(HORIZON, 0.0022);
 
 const camera = new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.3, 4000);
 const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
@@ -726,6 +726,7 @@ function terrainColor(y,slope,moist){
 // ════════════════════════════════════════════════════════════
 const terrainMat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.96, metalness:0 });
 const chunks = new Map();          // key -> record
+const _fading = [];                // chunks fading in [{mat,start}]
 const collideByChunk = new Map();  // key -> [{x,z,r}]
 
 function buildChunk(cx,cz,lod){
@@ -747,9 +748,12 @@ function buildChunk(cx,cz,lod){
         col[i]=c[0]; col[i+1]=c[1]; col[i+2]=c[2];
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col,3));
-    const mesh=new THREE.Mesh(geo, terrainMat);
+    const _fm = terrainMat.clone();
+    _fm.transparent = true; _fm.opacity = 0;
+    const mesh=new THREE.Mesh(geo, _fm);
     mesh.position.set(ox,0,oz); mesh.receiveShadow=lod<2;
     scene.add(mesh); rec.objs.push(mesh);
+    _fading.push({ mat: _fm, start: performance.now() });
 
     if(lod<2){
         // ── scatter vegetation / rocks (half density for LOD) ──
@@ -2058,12 +2062,14 @@ function animate(){
     update(clock.getDelta());
     processLodUpgrades();
     processChunkQueue();
-    // dynamic fog masks unloaded chunks
-    const total = (2*VIEW_R+1)**2;
-    const ratio = Math.min(chunks.size / total, 1);
-    const fogFar = CHUNK*2 + ratio * (VIEW_R*CHUNK - CHUNK*2);
-    const fogNear = fogFar * 0.5;
-    scene.fog.far = fogFar; scene.fog.near = fogNear;
+    // chunk fade-in over 1s
+    const _fn = performance.now();
+    for(let i=_fading.length-1;i>=0;i--){
+        const f=_fading[i];
+        const t=Math.min((_fn-f.start)/1000,1);
+        f.mat.opacity=t;
+        if(t>=1){ f.mat.transparent=false; _fading.splice(i,1); }
+    }
     renderer.render(scene,camera);
 }
 animate();
