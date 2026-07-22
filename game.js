@@ -32,7 +32,7 @@ const LOD_R        = 10;       // chunks within this radius get full quality
 const FAR_LOD_R    = 20;       // chunks beyond this get bare terrain only (no vegetation)
 
 // Car / physics
-const MAX_SPEED    = 130;       // m/s (~302 km/h)
+const MAX_SPEED    = 140;       // m/s (~302 km/h)
 const MAX_REVERSE  = 20;
 const ACCEL        = 30;
 const BRAKE        = 26;
@@ -41,7 +41,7 @@ const WHEELBASE    = 2.7;
 const TRACK        = 1.7;
 const WHEEL_R      = 0.34;
 const RIDE_H       = 0.2;
-const GRAVITY      = 9.81;
+const GRAVITY      = 8;
 const CAR_MASS     = 2000;
 const ENGINE_MAX_TORQUE = 600;   // Nm — riittää 2000 kg autolle mäissä
 const REDLINE_RPM  = 8000;
