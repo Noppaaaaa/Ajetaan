@@ -56,7 +56,7 @@ const ROLLING_RESIST = 0.015;
 const AIR_DENSITY   = 1.225;
 const DRAG_COEF     = 0.35;
 const FRONTAL_AREA  = 2.2;
-const MAX_BRAKE_TORQUE = 8000;
+const MAX_BRAKE_TORQUE = 11000;
 
 // ── World regeneration (fully random seed, new map every hour) ──
 const WORLD_MS = 3600000;
